@@ -41,6 +41,7 @@ const I18N = {
     points: "Points",
     shields: "Shields",
     human: "Human",
+    botRandom: "Random AI",
     hidden: "Hidden",
     reveal: "Round Reveal",
     noReveal: "No reveal yet.",
@@ -77,6 +78,7 @@ const I18N = {
     points: "气",
     shields: "盾",
     human: "人类",
+    botRandom: "统一AI",
     hidden: "隐藏",
     reveal: "回合结算",
     noReveal: "暂无结算。",
@@ -409,12 +411,13 @@ function renderPlayerTile(player) {
   const revealed = state.reveal?.byPlayer?.[player.id];
   const lastAction = revealed ? actionLabel(revealed.intent.type) : dict.hidden;
   const actionText = state.phase === "display" || state.phase === "gameOver" ? lastAction : dict.hidden;
+  const roleLabel = player.isHuman ? dict.human : dict.botRandom;
 
   return `
     <div class="player-tile ${player.alive ? "" : "dead"}">
       <h3>${player.name}</h3>
       <div class="badges">
-        <span class="badge">${player.isHuman ? dict.human : player.botType}</span>
+        <span class="badge">${roleLabel}</span>
         <span class="badge">${dict.points}: ${fmt(player.points)}</span>
         <span class="badge">${dict.shields}: ${player.shields}</span>
       </div>

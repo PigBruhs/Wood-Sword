@@ -56,11 +56,13 @@ A browser-based round game with one human player and four bots.
 ## Implementation Notes
 - Invalid actions are rejected (for example, not enough points or trying `shield` at cap 2).
 - `Qi`/points are stored in `0.5` increments internally.
-- Bots are assigned random archetypes each game (`Aggro`, `Saver`, `Counter`, `Chaos`, `Sniper`).
+- Bots now use one unified AI mode.
 - Bot baseline rules include:
   - first round always `gather`,
+  - random action choice from current legal actions,
+  - random target choice for single-target attacks (human and bot opponents are equally likely),
   - `dt defense` is not used unless an alive opponent has more than 3 points,
-  - stronger attack preference with target prioritization.
+  - bots never use `missile`.
 
 ## Development
 Requirements: Node.js 18+
