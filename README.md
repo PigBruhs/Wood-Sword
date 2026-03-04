@@ -57,13 +57,17 @@ A browser-based round game with one human player and four bots.
 ## Implementation Notes
 - Invalid actions are rejected (for example, not enough points or trying `shield` at cap 2).
 - `Qi`/points are stored in `0.5` increments internally.
-- Bots now use one unified AI mode.
+- Bots now use one unified weighted-random AI mode.
 - Bot baseline rules include:
   - first round always `gather`,
-  - random action choice from current legal actions,
-  - random target choice for single-target attacks (human and bot opponents are equally likely),
+  - action picks remain random but are weighted by situation (incoming threat, cost, and damage potential),
+  - defense actions are biased toward better overflow prevention per cost,
+  - single-target attacks are biased toward opponents estimated to be more vulnerable,
+  - aggro multipliers: `2x` against the opponent who has dealt this bot the most damage in the current match, and `1.5x` against lowest-Qi targets,
   - `dt defense` is not used unless an alive opponent has more than 3 points,
+  - `hollow defense` / `superior defense` are not used unless an alive opponent has at least 5 points,
   - bots never use `missile`.
+- Match transition rule: if someone is eliminated this round, that round still stays in display/reveal; click `Next Round` once to settle elimination display, click again to start the next match.
 
 ## Development
 Requirements: Node.js 18+

@@ -58,7 +58,9 @@ const I18N = {
     finishAllocation: "Finish Allocation",
     lockMessage: (label) => `Locked in: ${label}`,
     actionPhaseHint: "Pick your action and lock it when ready.",
-    nextRound: "Next Round"
+    nextRound: "Next Round",
+    nextMatch: "Next Match",
+    eliminationHold: "Elimination resolved. Click again to start the next match."
   },
   zh: {
     title: "木剑",
@@ -95,7 +97,9 @@ const I18N = {
     finishAllocation: "完成分配",
     lockMessage: (label) => `已锁定：${label}`,
     actionPhaseHint: "选择行动后点击锁定。",
-    nextRound: "下一回合"
+    nextRound: "下一回合",
+    nextMatch: "下一场",
+    eliminationHold: "本回合淘汰已结算，再点一次进入下一场。"
   }
 };
 
@@ -250,7 +254,7 @@ function onNextRound() {
     return;
   }
   processRoundEnd(state, state.reveal);
-  if (!state.gameOver) {
+  if (!state.gameOver && state.phase === "action") {
     startActionPhase();
   }
   render();
@@ -267,7 +271,11 @@ function submitHumanIntent() {
     intent.count = Number(ui.stackCount);
   }
   if (ACTIONS[ui.actionType].needsTarget) {
-    intent.targetId = ui.targetId;
+    const aliveTargets = state.players.filter((p) => p.alive && p.id !== "human");
+    const selectedStillAlive = aliveTargets.some((p) => p.id === ui.targetId);
+    const fallbackTargetId = aliveTargets[0]?.id ?? "";
+    intent.targetId = selectedStillAlive ? ui.targetId : fallbackTargetId;
+    ui.targetId = intent.targetId;
   }
 
   const check = validateIntent(state, human, intent);
@@ -312,12 +320,15 @@ function render() {
   const human = state.players.find((p) => p.id === "human");
   const aliveTargets = state.players.filter((p) => p.alive && p.id !== "human");
   const dict = t();
-  if (!ui.targetId && aliveTargets[0]) {
+  if (aliveTargets.length === 0) {
+    ui.targetId = "";
+  } else if (!aliveTargets.some((p) => p.id === ui.targetId)) {
     ui.targetId = aliveTargets[0].id;
   }
 
   const controlsDisabled = state.phase !== "action" || !human.alive;
   const missileAllocationActive = isMissileAllocationActive();
+  const nextLabel = state.pendingMatchAdvance ? dict.nextMatch : dict.nextRound;
 
   app.innerHTML = `
     <div class="card">
@@ -331,51 +342,57 @@ function render() {
       </div>
     </div>
 
-    <div class="card">
-      <h2>${dict.players}</h2>
-      ${renderCombatArena()}
-    </div>
-
-    <div class="card">
-      <h2>${dict.yourAction}</h2>
-      <div class="controls">
-        <div class="row">
-          <label>${dict.action}</label>
-          <select id="actionType" ${controlsDisabled ? "disabled" : ""}>
-            ${ACTION_ORDER.map((type) => {
-              const def = ACTIONS[type];
-              const selected = ui.actionType === type ? "selected" : "";
-              return `<option value="${type}" ${selected}>${actionLabel(type)} (${type === "missile" ? "x+1" : def.cost})</option>`;
-            }).join("")}
-          </select>
+    <div class="board-grid">
+      <div class="panel-card">
+        <h2>${dict.yourAction}</h2>
+        <div class="controls">
+          <div class="row">
+            <label>${dict.action}</label>
+            <select id="actionType" ${controlsDisabled ? "disabled" : ""}>
+              ${ACTION_ORDER.map((type) => {
+                const def = ACTIONS[type];
+                const selected = ui.actionType === type ? "selected" : "";
+                return `<option value="${type}" ${selected}>${actionLabel(type)} (${type === "missile" ? "x+1" : def.cost})</option>`;
+              }).join("")}
+            </select>
+          </div>
+          <div class="row" ${ACTIONS[ui.actionType].needsTarget ? "" : "style=\"display:none\""}>
+            <label>${dict.target}</label>
+            <select id="targetId" ${controlsDisabled ? "disabled" : ""}>
+              ${aliveTargets.map((p) => `<option value="${p.id}" ${ui.targetId === p.id ? "selected" : ""}>${p.name}</option>`).join("")}
+            </select>
+          </div>
+          <div class="row" ${(ui.actionType === "fist" || ui.actionType === "missile") ? "" : "style=\"display:none\""}>
+            <label>${dict.count}</label>
+            <input id="stackCount" type="number" min="1" step="1" value="${ui.stackCount}" ${controlsDisabled ? "disabled" : ""} />
+          </div>
+          <button class="primary" id="lockAction" ${controlsDisabled ? "disabled" : ""}>${dict.lockAction}</button>
+          <p>${ui.message}</p>
         </div>
-        <div class="row" ${ACTIONS[ui.actionType].needsTarget ? "" : "style=\"display:none\""}>
-          <label>${dict.target}</label>
-          <select id="targetId" ${controlsDisabled ? "disabled" : ""}>
-            ${aliveTargets.map((p) => `<option value="${p.id}" ${ui.targetId === p.id ? "selected" : ""}>${p.name}</option>`).join("")}
-          </select>
-        </div>
-        <div class="row" ${(ui.actionType === "fist" || ui.actionType === "missile") ? "" : "style=\"display:none\""}>
-          <label>${dict.count}</label>
-          <input id="stackCount" type="number" min="1" step="1" value="${ui.stackCount}" ${controlsDisabled ? "disabled" : ""} />
-        </div>
-        <button class="primary" id="lockAction" ${controlsDisabled ? "disabled" : ""}>${dict.lockAction}</button>
-        <p>${ui.message}</p>
       </div>
-    </div>
 
-    <div class="card" ${missileAllocationActive ? "" : "style=\"display:none\""}>
-      <h2>${dict.phaseMissile}</h2>
-      ${renderMissileQueue()}
-    </div>
-
-    <div class="card">
-      <h2>${dict.reveal}</h2>
-      <div class="controls" ${state.phase === "display" && !state.gameOver && state.reveal ? "" : "style=\"display:none\""}>
-        <button class="primary" id="nextRound">${dict.nextRound}</button>
+      <div class="panel-card">
+        <h2>${dict.players}</h2>
+        ${renderCombatArena()}
       </div>
-      <div class="log">
-        ${renderReveal()}
+
+      <div class="panel-card side-stack">
+        <div>
+          <h2>${dict.reveal}</h2>
+          <div class="controls" ${state.phase === "display" && !state.gameOver && state.reveal ? "" : "style=\"display:none\""}>
+            <button class="primary" id="nextRound">${nextLabel}</button>
+            <p ${state.pendingMatchAdvance ? "" : "style=\"display:none\""}>${dict.eliminationHold}</p>
+          </div>
+        </div>
+
+        <div ${missileAllocationActive ? "" : "style=\"display:none\""}>
+          <h2>${dict.phaseMissile}</h2>
+          ${renderMissileQueue()}
+        </div>
+
+        <div class="log">
+          ${renderReveal()}
+        </div>
       </div>
     </div>
   `;
@@ -405,14 +422,24 @@ function render() {
   document.getElementById("nextRound")?.addEventListener("click", onNextRound);
 }
 
+function getArenaPlayers() {
+  const recentlyEliminated = new Set(
+    state.phase === "display" && state.pendingMatchAdvance
+      ? (state.reveal?.deadThisRound ?? [])
+      : []
+  );
+
+  return state.players.filter((p) => p.alive || recentlyEliminated.has(p.id));
+}
+
 function renderCombatArena() {
-  const alivePlayers = state.players.filter((p) => p.alive);
-  if (alivePlayers.length === 0) {
+  const arenaPlayers = getArenaPlayers();
+  if (arenaPlayers.length === 0) {
     return "<p>No alive players.</p>";
   }
 
-  const positions = computeCirclePositions(alivePlayers);
-  const overlay = buildAttackOverlay(alivePlayers, positions);
+  const positions = computeCirclePositions(arenaPlayers);
+  const overlay = buildAttackOverlay(arenaPlayers, positions);
 
   return `
     <div class="combat-arena">
@@ -424,7 +451,7 @@ function renderCombatArena() {
         </defs>
         ${overlay.arcs.join("")}
       </svg>
-      ${alivePlayers.map((player) => renderPlayerNode(player, positions[player.id], overlay)).join("")}
+      ${arenaPlayers.map((player) => renderPlayerNode(player, positions[player.id], overlay)).join("")}
     </div>
   `;
 }
@@ -516,10 +543,11 @@ function renderPlayerNode(player, pos, overlay) {
   const actionText = intent ? formatIntentWithTarget(intent) : dict.hidden;
   const roleLabel = player.isHuman ? dict.human : dict.botRandom;
   const targetedClass = overlay.targeted.has(player.id) ? " targeted" : "";
+  const eliminatedClass = !player.alive ? " eliminated" : "";
   const aggregate = overlay.aggregateBySource[player.id];
 
   return `
-    <div class="player-tile player-node${targetedClass}" style="left:${pos.x.toFixed(2)}%; top:${pos.y.toFixed(2)}%;">
+    <div class="player-tile player-node${targetedClass}${eliminatedClass}" style="left:${pos.x.toFixed(2)}%; top:${pos.y.toFixed(2)}%;">
       <h3>${player.name}</h3>
       <div class="badges">
         <span class="badge">${roleLabel}</span>
@@ -617,7 +645,11 @@ function playerName(playerId) {
 }
 
 function fmt(value) {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+  const snapped = Math.round(Number(value) * 2) / 2;
+  if (!Number.isFinite(snapped)) {
+    return "0";
+  }
+  return Number.isInteger(snapped) ? String(snapped) : snapped.toFixed(1);
 }
 
 function shuffle(arr) {

@@ -16,6 +16,7 @@ export function createGameState() {
     { id: "bot-3", name: "Bot 3", isHuman: false, alive: true, points: 0, shields: 0, prepReady: false },
     { id: "bot-4", name: "Bot 4", isHuman: false, alive: true, points: 0, shields: 0, prepReady: false }
   ];
+
   return {
     gameOver: false,
     winnerId: null,
@@ -26,7 +27,10 @@ export function createGameState() {
     players,
     intents: {},
     reveal: null,
-    missileQueue: []
+    missileQueue: [],
+    pendingMatchAdvance: false,
+    pendingGameOver: false,
+    aggroByVictim: {}
   };
 }
 
@@ -39,11 +43,16 @@ export function resetMatch(state) {
     p.shields = 0;
     p.prepReady = false;
   }
+
   state.intents = {};
   state.reveal = null;
+  state.missileQueue = [];
   state.roundNumber = 1;
   state.phase = "action";
   state.phaseSecondsLeft = 5;
+  state.pendingMatchAdvance = false;
+  state.pendingGameOver = false;
+  state.aggroByVictim = {};
 }
 
 export function getAlivePlayers(state) {
@@ -55,34 +64,52 @@ export function validateIntent(state, player, intent) {
   if (!action) {
     return { ok: false, reason: "Unknown action." };
   }
+
   const cost = getActionCost(intent);
   if (!hasEnoughPoints(player.points, cost)) {
     return { ok: false, reason: "Not enough points." };
   }
+
   if (intent.type === "shield" && player.shields >= 2) {
     return { ok: false, reason: "Shield cap is 2." };
   }
+
   if (action.needsTarget) {
     if (!intent.targetId) {
       return { ok: false, reason: "Target is required." };
     }
     const target = state.players.find((p) => p.id === intent.targetId);
-    if (!target || !target.alive || target.id === player.id) {
+    if (!target) {
+      return { ok: false, reason: "Target is invalid." };
+    }
+    if (!target.alive) {
+      return { ok: false, reason: "Target is invalid." };
+    }
+    if (target.id === player.id) {
       return { ok: false, reason: "Target is invalid." };
     }
   }
+
   if (intent.type === "fist") {
     const count = intent.count ?? 1;
-    if (!Number.isInteger(count) || count <= 0) {
+    if (!Number.isInteger(count)) {
+      return { ok: false, reason: "Fist count must be an integer >= 1." };
+    }
+    if (count <= 0) {
       return { ok: false, reason: "Fist count must be an integer >= 1." };
     }
   }
+
   if (intent.type === "missile") {
     const count = intent.count ?? 1;
-    if (!Number.isInteger(count) || count <= 0) {
+    if (!Number.isInteger(count)) {
+      return { ok: false, reason: "Missile count must be an integer >= 1." };
+    }
+    if (count <= 0) {
       return { ok: false, reason: "Missile count must be an integer >= 1." };
     }
   }
+
   return { ok: true };
 }
 
@@ -116,12 +143,12 @@ export function resolveRound(state, intents) {
       shieldsBroken: 0,
       pointsSpent: 0,
       pointsGained: 0,
+      damageFrom: {},
       afterPoints: p.points,
       afterShields: p.shields
     };
   }
 
-  // Spend/apply non-combat effects once before combat simulation.
   for (const p of alive) {
     const entry = local[p.id];
     const cost = getActionCost(entry.intent);
@@ -148,11 +175,13 @@ export function resolveRound(state, intents) {
   const llamaUsers = alive.filter((p) => local[p.id].intent.type === "llama").map((p) => p.id);
   let activeLlamaUsers = new Set(llamaUsers);
   let outcome = null;
+  let finalDamageModel = { damageByTarget: {}, damageSourcesByTarget: {} };
 
-  // Recompute until active llama casters are stable; dead casters contribute no llama damage.
   for (let i = 0; i < llamaUsers.length + 1; i += 1) {
-    const damageByTarget = buildDamageByTarget(alive, local, duelContext, activeLlamaUsers);
-    outcome = simulateDefendAndShields(alive, local, damageByTarget, duelContext.duelOverflowByTarget);
+    const damageModel = buildDamageByTarget(alive, local, duelContext, activeLlamaUsers);
+    outcome = simulateDefendAndShields(alive, local, damageModel.damageByTarget, duelContext.duelOverflowByTarget);
+    finalDamageModel = damageModel;
+
     const deadSet = new Set(outcome.deadThisRound);
     const nextActive = new Set(llamaUsers.filter((id) => !deadSet.has(id)));
     if (sameSet(activeLlamaUsers, nextActive)) {
@@ -172,12 +201,17 @@ export function resolveRound(state, intents) {
     entry.overwhelmedDamage = res.overwhelmedDamage;
     entry.shieldsBroken = res.shieldsBroken;
     entry.died = res.died;
+    entry.damageFrom = mergeDamageMaps(
+      finalDamageModel.damageSourcesByTarget[p.id],
+      duelContext.duelOverflowByTargetSources[p.id]
+    );
 
     p.shields = res.afterShields;
     p.alive = !res.died;
 
     entry.afterPoints = p.points;
     entry.afterShields = p.shields;
+    accumulateAggro(state, p.id, entry.damageFrom);
   }
 
   for (const p of alive) {
@@ -199,15 +233,23 @@ export function resolveRound(state, intents) {
 function buildDuelContext(alive, local) {
   const byAttackerToTarget = new Map();
   const duelOverflowByTarget = {};
+  const duelOverflowByTargetSources = {};
   const canceledAttackPairs = new Set();
   const usedPrepAttackers = new Set();
 
   for (const p of alive) {
     const intent = local[p.id].intent;
     const action = ACTIONS[intent.type];
-    if (!action || action.kind !== "attack" || !intent.targetId) {
+    if (!action) {
       continue;
     }
+    if (action.kind !== "attack") {
+      continue;
+    }
+    if (!intent.targetId) {
+      continue;
+    }
+
     const damage = getIntentDamage(intent, p.prepReady);
     if (p.prepReady) {
       usedPrepAttackers.add(p.id);
@@ -218,7 +260,13 @@ function buildDuelContext(alive, local) {
   for (const p of alive) {
     const intent = local[p.id].intent;
     const action = ACTIONS[intent.type];
-    if (!action || action.kind !== "attack" || !intent.targetId) {
+    if (!action) {
+      continue;
+    }
+    if (action.kind !== "attack") {
+      continue;
+    }
+    if (!intent.targetId) {
       continue;
     }
 
@@ -239,18 +287,30 @@ function buildDuelContext(alive, local) {
     if (left === right) {
       continue;
     }
+
     if (left > right) {
-      duelOverflowByTarget[intent.targetId] = (duelOverflowByTarget[intent.targetId] ?? 0) + (left - right);
+      const delta = left - right;
+      duelOverflowByTarget[intent.targetId] = (duelOverflowByTarget[intent.targetId] ?? 0) + delta;
+      addDamageSource(duelOverflowByTargetSources, intent.targetId, p.id, delta);
     } else {
-      duelOverflowByTarget[p.id] = (duelOverflowByTarget[p.id] ?? 0) + (right - left);
+      const delta = right - left;
+      duelOverflowByTarget[p.id] = (duelOverflowByTarget[p.id] ?? 0) + delta;
+      addDamageSource(duelOverflowByTargetSources, p.id, intent.targetId, delta);
     }
   }
 
-  return { canceledAttackPairs, duelOverflowByTarget, usedPrepAttackers };
+  return {
+    canceledAttackPairs,
+    duelOverflowByTarget,
+    duelOverflowByTargetSources,
+    usedPrepAttackers,
+    byAttackerToTarget
+  };
 }
 
 function buildDamageByTarget(alive, local, duelContext, activeLlamaUsers) {
   const damageByTarget = {};
+  const damageSourcesByTarget = {};
 
   for (const p of alive) {
     const intent = local[p.id].intent;
@@ -260,6 +320,7 @@ function buildDamageByTarget(alive, local, duelContext, activeLlamaUsers) {
       const targetMap = intent.missileTargets ?? {};
       for (const [targetId, count] of Object.entries(targetMap)) {
         damageByTarget[targetId] = (damageByTarget[targetId] ?? 0) + count;
+        addDamageSource(damageSourcesByTarget, targetId, p.id, count);
       }
       continue;
     }
@@ -269,21 +330,58 @@ function buildDamageByTarget(alive, local, duelContext, activeLlamaUsers) {
       if (duelContext.canceledAttackPairs.has(key)) {
         continue;
       }
-      const damage = getIntentDamage(intent, false);
+      // Use precomputed attack damage so prep bonus applies exactly once.
+      const damage = duelContext.byAttackerToTarget.get(`${p.id}->${intent.targetId}`) ?? getIntentDamage(intent, false);
       damageByTarget[intent.targetId] = (damageByTarget[intent.targetId] ?? 0) + damage;
+      addDamageSource(damageSourcesByTarget, intent.targetId, p.id, damage);
       continue;
     }
 
     if (action.kind === "aoe" && activeLlamaUsers.has(p.id)) {
       for (const target of alive) {
-        if (target.id !== p.id) {
-          damageByTarget[target.id] = (damageByTarget[target.id] ?? 0) + action.baseDamage;
+        if (target.id === p.id) {
+          continue;
         }
+        damageByTarget[target.id] = (damageByTarget[target.id] ?? 0) + action.baseDamage;
+        addDamageSource(damageSourcesByTarget, target.id, p.id, action.baseDamage);
       }
     }
   }
 
-  return damageByTarget;
+  return { damageByTarget, damageSourcesByTarget };
+}
+
+function addDamageSource(byTarget, targetId, attackerId, amount) {
+  if (!(targetId && attackerId)) {
+    return;
+  }
+  if (amount <= 0) {
+    return;
+  }
+  if (!byTarget[targetId]) {
+    byTarget[targetId] = {};
+  }
+  byTarget[targetId][attackerId] = (byTarget[targetId][attackerId] ?? 0) + amount;
+}
+
+function mergeDamageMaps(primary, secondary) {
+  const merged = { ...(primary ?? {}) };
+  for (const [attackerId, amount] of Object.entries(secondary ?? {})) {
+    merged[attackerId] = (merged[attackerId] ?? 0) + amount;
+  }
+  return merged;
+}
+
+function accumulateAggro(state, victimId, damageFrom) {
+  if (!state.aggroByVictim[victimId]) {
+    state.aggroByVictim[victimId] = {};
+  }
+  for (const [attackerId, amount] of Object.entries(damageFrom ?? {})) {
+    if (amount <= 0) {
+      continue;
+    }
+    state.aggroByVictim[victimId][attackerId] = (state.aggroByVictim[victimId][attackerId] ?? 0) + amount;
+  }
 }
 
 function simulateDefendAndShields(alive, local, damageByTarget, duelOverflowByTarget) {
@@ -329,7 +427,7 @@ function simulateDefendAndShields(alive, local, damageByTarget, duelOverflowByTa
 }
 
 function pairKey(a, b) {
-  return a < b ? `${a}|${b}` : `${b}|${a}`;
+  return a < b ? `${a}~${b}` : `${b}~${a}`;
 }
 
 function sameSet(a, b) {
@@ -347,8 +445,22 @@ function sameSet(a, b) {
 export function processRoundEnd(state, reveal) {
   state.reveal = reveal;
 
+  if (state.pendingGameOver) {
+    state.gameOver = true;
+    state.phase = "gameOver";
+    state.pendingGameOver = false;
+    state.pendingMatchAdvance = false;
+    state.intents = {};
+    return;
+  }
+
+  if (state.pendingMatchAdvance) {
+    state.matchNumber += 1;
+    resetMatch(state);
+    return;
+  }
+
   if (reveal.deadThisRound.length > 0) {
-    state.phase = "matchEnd";
     for (const deadId of reveal.deadThisRound) {
       const p = state.players.find((x) => x.id === deadId);
       if (p) {
@@ -358,19 +470,47 @@ export function processRoundEnd(state, reveal) {
 
     const stillAlive = getAlivePlayers(state);
     if (stillAlive.length <= 1) {
-      state.gameOver = true;
       state.winnerId = stillAlive.length === 1 ? stillAlive[0].id : null;
-      state.phase = "gameOver";
+      state.phase = "display";
+      state.pendingGameOver = true;
+      state.pendingMatchAdvance = false;
+      state.intents = {};
       return;
     }
 
-    state.matchNumber += 1;
-    resetMatch(state);
+    state.phase = "display";
+    state.pendingMatchAdvance = true;
+    state.pendingGameOver = false;
+    state.intents = {};
     return;
   }
 
   state.roundNumber += 1;
   state.phase = "action";
   state.phaseSecondsLeft = 5;
+  state.pendingMatchAdvance = false;
+  state.pendingGameOver = false;
   state.intents = {};
+}
+
+export function advancePhase(state) {
+  if (state.phase === "display" && state.pendingMatchAdvance) {
+    state.phase = "action";
+    state.roundNumber += 1;
+    state.phaseSecondsLeft = 5;
+    state.pendingMatchAdvance = false;
+    state.intents = {};
+    return;
+  }
+
+  if (state.phase === "display") {
+    state.pendingMatchAdvance = true;
+    return;
+  }
+
+  if (state.phase === "action") {
+    // Existing logic for action phase...
+  }
+
+  // Other phases...
 }

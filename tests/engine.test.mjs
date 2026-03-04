@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createGameState, resolveRound } from "../src/game/engine.js";
+import { createGameState, processRoundEnd, resolveRound } from "../src/game/engine.js";
 
 function player(state, id) {
   return state.players.find((p) => p.id === id);
@@ -153,6 +153,111 @@ function resetAlive(state) {
   });
 
   assert.equal(player(state, "human").points, 0.5);
+})();
+
+(function testEliminationNeedsSecondAdvanceToStartNextMatch() {
+  const state = createGameState();
+  resetAlive(state);
+  state.roundNumber = 3;
+
+  const reveal = resolveRound(state, {
+    human: { type: "defense" },
+    "bot-1": { type: "enchantedDiamondSword", targetId: "human" },
+    "bot-2": { type: "defense" },
+    "bot-3": { type: "defense" },
+    "bot-4": { type: "defense" }
+  });
+
+  processRoundEnd(state, reveal);
+  assert.equal(state.pendingMatchAdvance, true);
+  assert.equal(state.matchNumber, 1);
+  assert.equal(state.roundNumber, 3);
+  assert.equal(player(state, "human").alive, false);
+  assert.equal(state.phase, "display");
+
+  processRoundEnd(state, reveal);
+  assert.equal(state.pendingMatchAdvance, false);
+  assert.equal(state.matchNumber, 2);
+  assert.equal(state.roundNumber, 1);
+  assert.equal(state.phase, "action");
+})();
+
+(function testPrepAddsOneDamageToNextAttackAndIsConsumed() {
+  const state = createGameState();
+  resetAlive(state);
+
+  const prepReveal = resolveRound(state, {
+    human: { type: "prep" },
+    "bot-1": { type: "defense" },
+    "bot-2": { type: "defense" },
+    "bot-3": { type: "defense" },
+    "bot-4": { type: "defense" }
+  });
+
+  assert.equal(prepReveal.byPlayer.human.incomingDamage, 0);
+  assert.equal(player(state, "human").prepReady, true);
+
+  const attackReveal = resolveRound(state, {
+    human: { type: "woodSword", targetId: "bot-1" },
+    "bot-1": { type: "defense" },
+    "bot-2": { type: "defense" },
+    "bot-3": { type: "defense" },
+    "bot-4": { type: "defense" }
+  });
+
+  assert.equal(attackReveal.byPlayer["bot-1"].incomingDamage, 2);
+  assert.equal(player(state, "human").prepReady, false);
+})();
+
+(function testPrepCanceledWhenTakingIncomingAttack() {
+  const state = createGameState();
+  resetAlive(state);
+
+  const prepReveal = resolveRound(state, {
+    human: { type: "prep" },
+    "bot-1": { type: "woodSword", targetId: "human" },
+    "bot-2": { type: "defense" },
+    "bot-3": { type: "defense" },
+    "bot-4": { type: "defense" }
+  });
+
+  assert.equal(prepReveal.byPlayer.human.incomingDamage, 1);
+  assert.equal(player(state, "human").prepReady, false);
+
+  const attackReveal = resolveRound(state, {
+    human: { type: "woodSword", targetId: "bot-2" },
+    "bot-1": { type: "defense" },
+    "bot-2": { type: "defense" },
+    "bot-3": { type: "defense" },
+    "bot-4": { type: "defense" }
+  });
+
+  assert.equal(attackReveal.byPlayer["bot-2"].incomingDamage, 1);
+})();
+
+(function testFinalEliminationShowsDisplayBeforeGameOver() {
+  const state = createGameState();
+  resetAlive(state);
+
+  player(state, "bot-2").alive = false;
+  player(state, "bot-3").alive = false;
+  player(state, "bot-4").alive = false;
+
+  const reveal = resolveRound(state, {
+    human: { type: "enchantedDiamondSword", targetId: "bot-1" },
+    "bot-1": { type: "defense" }
+  });
+
+  processRoundEnd(state, reveal);
+  assert.equal(state.gameOver, false);
+  assert.equal(state.phase, "display");
+  assert.equal(state.pendingGameOver, true);
+  assert.equal(state.winnerId, "human");
+
+  processRoundEnd(state, reveal);
+  assert.equal(state.gameOver, true);
+  assert.equal(state.phase, "gameOver");
+  assert.equal(state.pendingGameOver, false);
 })();
 
 console.log("engine tests passed");

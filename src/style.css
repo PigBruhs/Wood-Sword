@@ -13,10 +13,30 @@ body {
 }
 
 #app {
-  max-width: 720px;
+  max-width: 1440px;
   margin: 0 auto;
   min-height: 100vh;
   padding: 12px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 12px;
+}
+
+.board-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(420px, 1fr) minmax(300px, 360px);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.panel-card {
+  background: white;
+  border-radius: 12px;
+  border: 1px solid #dbeafe;
+  padding: 12px;
+  min-height: 0;
+  overflow: auto;
 }
 
 .card {
@@ -24,7 +44,11 @@ body {
   border-radius: 12px;
   border: 1px solid #dbeafe;
   padding: 12px;
-  margin-bottom: 12px;
+}
+
+.side-stack {
+  display: grid;
+  gap: 10px;
 }
 
 h1,
@@ -43,6 +67,9 @@ p {
 }
 
 .combat-arena {
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  grid-template-areas: "actions arena log";
   position: relative;
   width: 100%;
   aspect-ratio: 1 / 1;
@@ -51,6 +78,18 @@ p {
   border-radius: 14px;
   background: radial-gradient(circle at 50% 50%, #eff6ff 0%, #dbeafe 70%, #bfdbfe 100%);
   overflow: hidden;
+}
+
+.action-panel {
+  grid-area: actions;
+}
+
+.log-panel {
+  grid-area: log;
+}
+
+.arena-content {
+  grid-area: arena;
 }
 
 .attack-layer {
@@ -98,6 +137,16 @@ p {
 
 .player-node.targeted {
   box-shadow: 0 0 0 2px #f59e0b;
+}
+
+.player-node.eliminated {
+  box-shadow: 0 0 0 2px #ef4444;
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.player-node.targeted.eliminated {
+  box-shadow: 0 0 0 2px #ef4444, 0 0 0 4px #f59e0b;
 }
 
 .badges {
@@ -170,6 +219,27 @@ button:disabled {
   color: #1e293b;
   display: grid;
   gap: 4px;
+  max-height: 52vh;
+  overflow: auto;
+}
+
+@media (max-width: 1080px) {
+  #app {
+    grid-template-rows: auto;
+  }
+
+  .board-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .panel-card {
+    overflow: visible;
+  }
+
+  .log {
+    max-height: none;
+    overflow: visible;
+  }
 }
 
 @media (max-width: 480px) {

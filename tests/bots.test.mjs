@@ -15,37 +15,12 @@ function setAliveDefaults(state) {
   }
 }
 
-function withMockedRandom(value, fn) {
-  const original = Math.random;
-  Math.random = () => value;
-  try {
-    return fn();
-  } finally {
-    Math.random = original;
-  }
-}
-
-function withMockedRandomSequence(values, fn) {
-  const original = Math.random;
-  let index = 0;
-  Math.random = () => {
-    const next = values[Math.min(index, values.length - 1)];
-    index += 1;
-    return next;
-  };
-  try {
-    return fn();
-  } finally {
-    Math.random = original;
-  }
-}
-
 function withSeededRandom(seed, fn) {
   const original = Math.random;
-  let state = seed >>> 0;
+  let rng = seed >>> 0;
   Math.random = () => {
-    state = (1664525 * state + 1013904223) >>> 0;
-    return state / 0x100000000;
+    rng = (1664525 * rng + 1013904223) >>> 0;
+    return rng / 0x100000000;
   };
   try {
     return fn();
@@ -74,10 +49,12 @@ function withSeededRandom(seed, fn) {
   const bot = player(state, "bot-1");
   bot.points = 8;
 
-  for (let i = 0; i < 100; i += 1) {
-    const intent = chooseBotAction(state, bot);
-    assert.notEqual(intent.type, "missile");
-  }
+  withSeededRandom(1, () => {
+    for (let i = 0; i < 500; i += 1) {
+      const intent = chooseBotAction(state, bot);
+      assert.notEqual(intent.type, "missile");
+    }
+  });
 })();
 
 (function testAvoidsDtDefenseWithoutRichOpponents() {
@@ -86,7 +63,7 @@ function withSeededRandom(seed, fn) {
   state.roundNumber = 2;
 
   const bot = player(state, "bot-1");
-  bot.points = 1;
+  bot.points = 3;
   bot.shields = 2;
 
   for (const p of state.players) {
@@ -95,79 +72,35 @@ function withSeededRandom(seed, fn) {
     }
   }
 
-  const intent = withMockedRandom(0.99, () => chooseBotAction(state, bot));
-  assert.notEqual(intent.type, "dtDefense");
+  withSeededRandom(2, () => {
+    for (let i = 0; i < 1000; i += 1) {
+      const intent = chooseBotAction(state, bot);
+      assert.notEqual(intent.type, "dtDefense");
+    }
+  });
 })();
 
-(function testCanPickDtDefenseWhenRichOpponentExists() {
+(function testCanUseDtDefenseWhenRichOpponentExists() {
   const state = createGameState();
   setAliveDefaults(state);
   state.roundNumber = 2;
 
   const bot = player(state, "bot-1");
-  bot.points = 1;
+  bot.points = 3;
   bot.shields = 2;
   player(state, "bot-2").points = 4;
 
-  const intent = withMockedRandom(0.99, () => chooseBotAction(state, bot));
-  assert.equal(intent.type, "dtDefense");
-})();
-
-(function testAttackCanTargetHumanAndBotUniformly() {
-  const state = createGameState();
-  setAliveDefaults(state);
-  state.roundNumber = 2;
-
-  const bot = player(state, "bot-1");
-  bot.points = 1;
-  bot.shields = 2;
-
-  // Keep exactly two alive opponents (human and one bot) for a direct uniform-target check.
-  player(state, "bot-3").alive = false;
-  player(state, "bot-4").alive = false;
-
-  const humanTargetIntent = withMockedRandomSequence([0.75, 0.1], () => chooseBotAction(state, bot));
-  assert.equal(humanTargetIntent.type, "woodSword");
-  assert.equal(humanTargetIntent.targetId, "human");
-
-  const botTargetIntent = withMockedRandomSequence([0.75, 0.9], () => chooseBotAction(state, bot));
-  assert.equal(botTargetIntent.type, "woodSword");
-  assert.equal(botTargetIntent.targetId, "bot-2");
-})();
-
-(function testTargetDistributionStaysNearUniform() {
-  const state = createGameState();
-  setAliveDefaults(state);
-  state.roundNumber = 2;
-
-  const bot = player(state, "bot-1");
-  bot.points = 1;
-  bot.shields = 2;
-
-  // Keep exactly two alive opponents (human and one bot).
-  player(state, "bot-3").alive = false;
-  player(state, "bot-4").alive = false;
-
-  let humanHits = 0;
-  let botHits = 0;
-
-  withSeededRandom(123456789, () => {
-    for (let i = 0; i < 4000; i += 1) {
+  let dtCount = 0;
+  withSeededRandom(3, () => {
+    for (let i = 0; i < 1500; i += 1) {
       const intent = chooseBotAction(state, bot);
-      if (intent.targetId === "human") {
-        humanHits += 1;
-      }
-      if (intent.targetId === "bot-2") {
-        botHits += 1;
+      if (intent.type === "dtDefense") {
+        dtCount += 1;
       }
     }
   });
 
-  const targetedSamples = humanHits + botHits;
-  assert.ok(targetedSamples >= 1200, `targeted sample size too small: ${targetedSamples}`);
-
-  const humanRatio = humanHits / targetedSamples;
-  assert.ok(humanRatio > 0.45 && humanRatio < 0.55, `human ratio out of range: ${humanRatio}`);
+  assert.ok(dtCount > 0, `expected dtDefense to appear, got ${dtCount}`);
 })();
 
 (function testAvoidsHighDefenseWithoutFivePointOpponent() {
@@ -185,26 +118,16 @@ function withSeededRandom(seed, fn) {
     }
   }
 
-  const intent = withMockedRandom(0.99, () => chooseBotAction(state, bot));
-  assert.notEqual(intent.type, "hollowDefense");
-  assert.notEqual(intent.type, "superiorDefense");
+  withSeededRandom(4, () => {
+    for (let i = 0; i < 1000; i += 1) {
+      const intent = chooseBotAction(state, bot);
+      assert.notEqual(intent.type, "hollowDefense");
+      assert.notEqual(intent.type, "superiorDefense");
+    }
+  });
 })();
 
-(function testCanPickHollowDefenseWithFivePointOpponent() {
-  const state = createGameState();
-  setAliveDefaults(state);
-  state.roundNumber = 2;
-
-  const bot = player(state, "bot-1");
-  bot.points = 2;
-  bot.shields = 2;
-  player(state, "bot-2").points = 5;
-
-  const intent = withMockedRandom(0.99, () => chooseBotAction(state, bot));
-  assert.equal(intent.type, "hollowDefense");
-})();
-
-(function testCanPickSuperiorDefenseWithFivePointOpponent() {
+(function testCanUseHighDefenseWithFivePointOpponent() {
   const state = createGameState();
   setAliveDefaults(state);
   state.roundNumber = 2;
@@ -214,8 +137,23 @@ function withSeededRandom(seed, fn) {
   bot.shields = 2;
   player(state, "bot-2").points = 5;
 
-  const intent = withMockedRandom(0.99, () => chooseBotAction(state, bot));
-  assert.equal(intent.type, "superiorDefense");
+  let hollow = 0;
+  let superior = 0;
+
+  withSeededRandom(5, () => {
+    for (let i = 0; i < 2000; i += 1) {
+      const intent = chooseBotAction(state, bot);
+      if (intent.type === "hollowDefense") {
+        hollow += 1;
+      }
+      if (intent.type === "superiorDefense") {
+        superior += 1;
+      }
+    }
+  });
+
+  assert.ok(hollow > 0, `expected hollowDefense to appear, got ${hollow}`);
+  assert.ok(superior > 0, `expected superiorDefense to appear, got ${superior}`);
 })();
 
 (function testDeadFivePointOpponentDoesNotUnlockHighDefense() {
@@ -237,9 +175,211 @@ function withSeededRandom(seed, fn) {
     }
   }
 
-  const intent = withMockedRandom(0.99, () => chooseBotAction(state, bot));
-  assert.notEqual(intent.type, "hollowDefense");
-  assert.notEqual(intent.type, "superiorDefense");
+  withSeededRandom(6, () => {
+    for (let i = 0; i < 1000; i += 1) {
+      const intent = chooseBotAction(state, bot);
+      assert.notEqual(intent.type, "hollowDefense");
+      assert.notEqual(intent.type, "superiorDefense");
+    }
+  });
+})();
+
+(function testPrefersEfficientDefenseUnderHeavyThreat() {
+  const state = createGameState();
+  setAliveDefaults(state);
+  state.roundNumber = 2;
+
+  const bot = player(state, "bot-1");
+  bot.points = 3;
+  bot.shields = 0;
+
+  // Keep pressure high so defense choice matters.
+  player(state, "human").points = 6;
+  player(state, "bot-2").points = 6;
+  player(state, "bot-3").points = 6;
+  player(state, "bot-4").points = 6;
+
+  let defense = 0;
+  let superior = 0;
+
+  withSeededRandom(7, () => {
+    for (let i = 0; i < 3000; i += 1) {
+      const intent = chooseBotAction(state, bot);
+      if (intent.type === "defense") {
+        defense += 1;
+      }
+      if (intent.type === "superiorDefense") {
+        superior += 1;
+      }
+    }
+  });
+
+  assert.ok(superior > defense, `expected superiorDefense to be preferred over defense, got superior=${superior}, defense=${defense}`);
+})();
+
+(function testBiasesTargetsTowardVulnerableOpponents() {
+  const state = createGameState();
+  setAliveDefaults(state);
+  state.roundNumber = 2;
+
+  const bot = player(state, "bot-1");
+  bot.points = 1;
+  bot.shields = 2;
+
+  // Keep exactly two alive opponents for a cleaner target-bias check.
+  player(state, "bot-3").alive = false;
+  player(state, "bot-4").alive = false;
+
+  const human = player(state, "human");
+  human.points = 0;
+  human.shields = 0;
+  human.prepReady = true;
+
+  const tank = player(state, "bot-2");
+  tank.points = 6;
+  tank.shields = 2;
+
+  let vulnerableHits = 0;
+  let tankHits = 0;
+
+  withSeededRandom(8, () => {
+    for (let i = 0; i < 5000; i += 1) {
+      const intent = chooseBotAction(state, bot);
+      if (!intent.targetId) {
+        continue;
+      }
+      if (intent.targetId === "human") {
+        vulnerableHits += 1;
+      }
+      if (intent.targetId === "bot-2") {
+        tankHits += 1;
+      }
+    }
+  });
+
+  const targetedSamples = vulnerableHits + tankHits;
+  assert.ok(targetedSamples >= 1200, `targeted sample size too small: ${targetedSamples}`);
+
+  const vulnerableRatio = vulnerableHits / targetedSamples;
+  assert.ok(vulnerableRatio > 0.62, `expected vulnerable target bias, ratio=${vulnerableRatio}`);
+})();
+
+(function testAggroDoublesRetaliationWeightAgainstTopDamager() {
+  const state = createGameState();
+  setAliveDefaults(state);
+  state.roundNumber = 2;
+
+  const bot = player(state, "bot-1");
+  bot.points = 1;
+  bot.shields = 2;
+
+  // Keep exactly two alive opponents for clear probability comparison.
+  player(state, "bot-3").alive = false;
+  player(state, "bot-4").alive = false;
+
+  const human = player(state, "human");
+  human.points = 2;
+  human.shields = 1;
+
+  const rival = player(state, "bot-2");
+  rival.points = 2;
+  rival.shields = 1;
+
+  let baseRivalHits = 0;
+  let baseHumanHits = 0;
+
+  withSeededRandom(11, () => {
+    for (let i = 0; i < 4000; i += 1) {
+      const intent = chooseBotAction(state, bot);
+      if (!intent.targetId) {
+        continue;
+      }
+      if (intent.targetId === "bot-2") {
+        baseRivalHits += 1;
+      }
+      if (intent.targetId === "human") {
+        baseHumanHits += 1;
+      }
+    }
+  });
+
+  state.aggroByVictim = {
+    "bot-1": {
+      "bot-2": 8
+    }
+  };
+
+  let aggroRivalHits = 0;
+  let aggroHumanHits = 0;
+
+  withSeededRandom(11, () => {
+    for (let i = 0; i < 4000; i += 1) {
+      const intent = chooseBotAction(state, bot);
+      if (!intent.targetId) {
+        continue;
+      }
+      if (intent.targetId === "bot-2") {
+        aggroRivalHits += 1;
+      }
+      if (intent.targetId === "human") {
+        aggroHumanHits += 1;
+      }
+    }
+  });
+
+  const baselineSamples = baseRivalHits + baseHumanHits;
+  const aggroSamples = aggroRivalHits + aggroHumanHits;
+  assert.ok(baselineSamples >= 900, `baseline targeted sample too small: ${baselineSamples}`);
+  assert.ok(aggroSamples >= 900, `aggro targeted sample too small: ${aggroSamples}`);
+
+  const baselineRatio = baseRivalHits / baselineSamples;
+  const aggroRatio = aggroRivalHits / aggroSamples;
+  assert.ok(aggroRatio > baselineRatio + 0.12, `expected aggro ratio increase, baseline=${baselineRatio}, aggro=${aggroRatio}`);
+})();
+
+(function testLowestQiTargetGetsExtraBias() {
+  const state = createGameState();
+  setAliveDefaults(state);
+  state.roundNumber = 2;
+
+  const bot = player(state, "bot-1");
+  bot.points = 1;
+  bot.shields = 2;
+
+  player(state, "bot-3").alive = false;
+  player(state, "bot-4").alive = false;
+
+  const lowQi = player(state, "human");
+  lowQi.points = 1;
+  lowQi.shields = 1;
+
+  const highQi = player(state, "bot-2");
+  highQi.points = 2;
+  highQi.shields = 1;
+
+  let lowQiHits = 0;
+  let highQiHits = 0;
+
+  withSeededRandom(12, () => {
+    for (let i = 0; i < 4500; i += 1) {
+      const intent = chooseBotAction(state, bot);
+      if (!intent.targetId) {
+        continue;
+      }
+      if (intent.targetId === "human") {
+        lowQiHits += 1;
+      }
+      if (intent.targetId === "bot-2") {
+        highQiHits += 1;
+      }
+    }
+  });
+
+  const targetedSamples = lowQiHits + highQiHits;
+  assert.ok(targetedSamples >= 1000, `targeted sample size too small: ${targetedSamples}`);
+
+  const lowQiRatio = lowQiHits / targetedSamples;
+  assert.ok(lowQiRatio > 0.56, `expected low-Qi bias, ratio=${lowQiRatio}`);
 })();
 
 console.log("bot tests passed");
