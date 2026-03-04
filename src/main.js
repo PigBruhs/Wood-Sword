@@ -17,9 +17,9 @@ const ui = {
   actionType: "gather",
   targetId: "",
   stackCount: 1,
-  message: "Pick your action and lock it when ready.",
+  message: "选择行动后点击锁定。",
   missileDraft: null,
-  lang: "en"
+  lang: "zh"
 };
 
 const I18N = {
@@ -118,8 +118,8 @@ const ACTION_LABELS = {
   superiorDefense: { en: "Superior Defense", zh: "高级防御" }
 };
 
-render();
 startActionPhase();
+render();
 
 function t() {
   return I18N[ui.lang];
@@ -197,7 +197,8 @@ function buildMissileQueue() {
     return;
   }
 
-  state.phase = "missileTarget";
+  // Missile target picking happens during display so locked actions are already visible.
+  state.phase = "display";
   ui.missileDraft = null;
   nextMissilePicker();
 }
@@ -238,12 +239,11 @@ function nextMissilePicker() {
 function revealRound() {
   state.phase = "display";
   state.phaseSecondsLeft = 0;
-   const reveal = resolveRound(state, state.intents);
-   state.reveal = reveal;
+  state.reveal = resolveRound(state, state.intents);
 
   clearInterval(timerId);
-   render();
- }
+  render();
+}
 
 function onNextRound() {
   if (state.phase !== "display" || !state.reveal) {
@@ -317,6 +317,7 @@ function render() {
   }
 
   const controlsDisabled = state.phase !== "action" || !human.alive;
+  const missileAllocationActive = isMissileAllocationActive();
 
   app.innerHTML = `
     <div class="card">
@@ -332,9 +333,7 @@ function render() {
 
     <div class="card">
       <h2>${dict.players}</h2>
-      <div class="player-ring">
-        ${state.players.map((p) => renderPlayerTile(p)).join("")}
-      </div>
+      ${renderCombatArena()}
     </div>
 
     <div class="card">
@@ -365,18 +364,18 @@ function render() {
       </div>
     </div>
 
-    <div class="card" ${state.phase === "missileTarget" ? "" : "style=\"display:none\""}>
+    <div class="card" ${missileAllocationActive ? "" : "style=\"display:none\""}>
       <h2>${dict.phaseMissile}</h2>
       ${renderMissileQueue()}
     </div>
 
     <div class="card">
       <h2>${dict.reveal}</h2>
+      <div class="controls" ${state.phase === "display" && !state.gameOver && state.reveal ? "" : "style=\"display:none\""}>
+        <button class="primary" id="nextRound">${dict.nextRound}</button>
+      </div>
       <div class="log">
         ${renderReveal()}
-      </div>
-      <div class="controls" ${state.phase === "display" && !state.gameOver ? "" : "style=\"display:none\""}>
-        <button class="primary" id="nextRound">${dict.nextRound}</button>
       </div>
     </div>
   `;
@@ -406,24 +405,145 @@ function render() {
   document.getElementById("nextRound")?.addEventListener("click", onNextRound);
 }
 
-function renderPlayerTile(player) {
-  const dict = t();
-  const revealed = state.reveal?.byPlayer?.[player.id];
-  const lastAction = revealed ? actionLabel(revealed.intent.type) : dict.hidden;
-  const actionText = state.phase === "display" || state.phase === "gameOver" ? lastAction : dict.hidden;
-  const roleLabel = player.isHuman ? dict.human : dict.botRandom;
+function renderCombatArena() {
+  const alivePlayers = state.players.filter((p) => p.alive);
+  if (alivePlayers.length === 0) {
+    return "<p>No alive players.</p>";
+  }
+
+  const positions = computeCirclePositions(alivePlayers);
+  const overlay = buildAttackOverlay(alivePlayers, positions);
 
   return `
-    <div class="player-tile ${player.alive ? "" : "dead"}">
+    <div class="combat-arena">
+      <svg class="attack-layer" viewBox="0 0 100 100" aria-hidden="true">
+        <defs>
+          <marker id="attack-arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 z" fill="currentColor"></path>
+          </marker>
+        </defs>
+        ${overlay.arcs.join("")}
+      </svg>
+      ${alivePlayers.map((player) => renderPlayerNode(player, positions[player.id], overlay)).join("")}
+    </div>
+  `;
+}
+
+function computeCirclePositions(players) {
+  const result = {};
+  const radius = 39;
+  const youIndex = players.findIndex((p) => p.id === "human");
+
+  // Keep You fixed at bottom-center and rotate everyone else around that anchor.
+  for (let i = 0; i < players.length; i += 1) {
+    const rotated = youIndex >= 0 ? (i - youIndex + players.length) % players.length : i;
+    const angle = (Math.PI / 2) + ((2 * Math.PI * rotated) / players.length);
+    result[players[i].id] = {
+      x: 50 + radius * Math.cos(angle),
+      y: 50 + radius * Math.sin(angle)
+    };
+  }
+  return result;
+}
+
+function buildAttackOverlay(alivePlayers, positions) {
+  const arcs = [];
+  const targeted = new Set();
+  const aggregateBySource = {};
+
+  for (const player of alivePlayers) {
+    const intent = visibleIntentForPlayer(player.id);
+    if (!intent) {
+      continue;
+    }
+
+    if (intent.type === "llama") {
+      aggregateBySource[player.id] = "AOE";
+      for (const target of alivePlayers) {
+        if (target.id !== player.id) {
+          targeted.add(target.id);
+        }
+      }
+      continue;
+    }
+
+    if (intent.type === "missile") {
+      const total = Number(intent.count ?? 0);
+      if (total > 0) {
+        aggregateBySource[player.id] = `M x${total}`;
+      }
+      for (const targetId of Object.keys(intent.missileTargets ?? {})) {
+        if (positions[targetId]) {
+          targeted.add(targetId);
+        }
+      }
+      continue;
+    }
+
+    if (!intent.targetId || !positions[intent.targetId]) {
+      continue;
+    }
+
+    targeted.add(intent.targetId);
+    arcs.push(renderAttackArc(player.id, intent.targetId, positions));
+  }
+
+  return { arcs, targeted, aggregateBySource };
+}
+
+function renderAttackArc(attackerId, targetId, positions) {
+  const from = positions[attackerId];
+  const to = positions[targetId];
+  if (!from || !to) {
+    return "";
+  }
+
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const length = Math.max(0.001, Math.hypot(dx, dy));
+  const nx = -dy / length;
+  const ny = dx / length;
+  const curve = Math.min(14, 6 + length * 0.08);
+  const cx = (from.x + to.x) / 2 + nx * curve;
+  const cy = (from.y + to.y) / 2 + ny * curve;
+
+  return `<path class="attack-arc" d="M ${from.x.toFixed(2)} ${from.y.toFixed(2)} Q ${cx.toFixed(2)} ${cy.toFixed(2)} ${to.x.toFixed(2)} ${to.y.toFixed(2)}" marker-end="url(#attack-arrowhead)"></path>`;
+}
+
+function renderPlayerNode(player, pos, overlay) {
+  const dict = t();
+  const intent = visibleIntentForPlayer(player.id);
+  const actionText = intent ? formatIntentWithTarget(intent) : dict.hidden;
+  const roleLabel = player.isHuman ? dict.human : dict.botRandom;
+  const targetedClass = overlay.targeted.has(player.id) ? " targeted" : "";
+  const aggregate = overlay.aggregateBySource[player.id];
+
+  return `
+    <div class="player-tile player-node${targetedClass}" style="left:${pos.x.toFixed(2)}%; top:${pos.y.toFixed(2)}%;">
       <h3>${player.name}</h3>
       <div class="badges">
         <span class="badge">${roleLabel}</span>
         <span class="badge">${dict.points}: ${fmt(player.points)}</span>
         <span class="badge">${dict.shields}: ${player.shields}</span>
+        ${aggregate ? `<span class="badge agg">${aggregate}</span>` : ""}
       </div>
       <p>${dict.action}: ${actionText}</p>
     </div>
   `;
+}
+
+function visibleIntentForPlayer(playerId) {
+  if (state.phase !== "display" && state.phase !== "gameOver") {
+    return null;
+  }
+  if (state.reveal?.byPlayer?.[playerId]) {
+    return state.reveal.byPlayer[playerId].intent;
+  }
+  return state.intents[playerId] ?? null;
+}
+
+function isMissileAllocationActive() {
+  return state.phase === "display" && !state.reveal && (Boolean(ui.missileDraft) || state.missileQueue.length > 0);
 }
 
 function renderMissileQueue() {

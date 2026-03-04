@@ -4,17 +4,18 @@ A browser-based round game with one human player and four bots.
 ## Current MVP
 - Runs fully in the browser after page load.
 - Fixed roster: 1 human + 4 bots.
-- Mobile-friendly layout with action controls and player ring.
+- Mobile-friendly layout with action controls and a circular combat arena.
 - English/Chinese language toggle in UI.
 - Match/round flow implemented with deterministic damage checks.
+- Visual attack indicators: curved arrows for single-target attacks, aggregate badges/highlights for multi-target attacks.
 
 ## Game Flow
 - A game has multiple matches.
 - A match has multiple rounds.
 - Round phases:
   1. Action lock phase: players choose actions in secret; round advances only when human locks action.
-  2. Missile target queue: missile users choose target allocations one-by-one in random order.
-  3. Display phase: actions resolve and results are revealed; player clicks `Next Round` to continue.
+  2. Display + missile allocation phase: locked actions are shown; missile users choose target allocations one-by-one in random order.
+  3. Display resolution phase: once missile allocations are done, actions resolve and results are revealed; player clicks `Next Round` to continue.
 - A match ends when at least one player dies in a round.
 - Dead players are eliminated from the game.
 - Survivors start the next match with reset stats (`0` points, `0` shields, no prep).
@@ -46,7 +47,7 @@ A browser-based round game with one human player and four bots.
 8. `diamond sword`: cost 5, 5 damage to one target.
 9. `enchanted diamond sword`: cost 6, 6 damage to one target.
 10. `llama`: cost 2, 0.5 damage to all other players, but deals no damage if the caster dies that round.
-11. `missile`: choose `X` missiles (cost `X + 1`, total damage `X`), then split targets in missile queue phase.
+11. `missile`: choose `X` missiles (cost `X + 1`, total damage `X`), then split targets during the display + missile allocation phase.
 12. `shield`: cost 2, blocks `0~2`, add one shield (max 2).
 13. `prep`: cost 1, blocks `0~3`, next attack +1 damage if not damaged.
 14. `dt defense`: cost 1, blocks `0~4`.
