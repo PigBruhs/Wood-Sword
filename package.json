@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node tests/engine.test.mjs && node tests/bots.test.mjs"
+    "test": "node tests/engine.test.mjs && node tests/bots.test.mjs && node tests/audio.test.mjs"
   },
   "devDependencies": {
     "vite": "^5.4.10"

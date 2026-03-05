@@ -2,9 +2,12 @@ import "./style.css";
 import { ACTIONS, ACTION_ORDER } from "./game/actions.js";
 import { assignBotType, chooseBotAction } from "./game/bots.js";
 import { createGameState, processRoundEnd, resolveRound, validateIntent } from "./game/engine.js";
+import { deriveDisplayAudioEvents, DisplaySfxQueue } from "./game/audio.js";
 
 const app = document.getElementById("app");
 const state = createGameState();
+const sfxQueue = new DisplaySfxQueue(100);
+let lastRevealWithQueuedSfx = null;
 
 for (const p of state.players) {
   if (!p.isHuman) {
@@ -244,9 +247,26 @@ function revealRound() {
   state.phase = "display";
   state.phaseSecondsLeft = 0;
   state.reveal = resolveRound(state, state.intents);
+  enqueueDisplaySfxIfNeeded();
 
   clearInterval(timerId);
   render();
+}
+
+function enqueueDisplaySfxIfNeeded() {
+  if (state.phase !== "display" || !state.reveal) {
+    return;
+  }
+  if (state.reveal === lastRevealWithQueuedSfx) {
+    return;
+  }
+
+  const events = deriveDisplayAudioEvents(state.reveal, "human");
+  if (events.length > 0) {
+    sfxQueue.enqueue(events);
+    sfxQueue.play();
+  }
+  lastRevealWithQueuedSfx = state.reveal;
 }
 
 function onNextRound() {

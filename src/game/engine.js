@@ -144,6 +144,7 @@ export function resolveRound(state, intents) {
       pointsSpent: 0,
       pointsGained: 0,
       damageFrom: {},
+      usedPrepBoost: false,
       afterPoints: p.points,
       afterShields: p.shields
     };
@@ -169,6 +170,9 @@ export function resolveRound(state, intents) {
     const attacker = state.players.find((x) => x.id === attackId);
     if (attacker) {
       attacker.prepReady = false;
+    }
+    if (local[attackId]) {
+      local[attackId].usedPrepBoost = true;
     }
   }
 
