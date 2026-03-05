@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "start": "vite --open",
     "build": "vite build",
+    "build:portable": "build-portable.bat",
     "preview": "vite preview",
     "test": "node tests/engine.test.mjs && node tests/bots.test.mjs && node tests/audio.test.mjs"
   },

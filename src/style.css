@@ -66,6 +66,23 @@ p {
   color: #334155;
 }
 
+.meta-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.meta-actions button {
+  width: auto;
+  min-width: 86px;
+  padding: 8px 10px;
+}
+
+button.muted {
+  background: #ef4444;
+  border-color: #dc2626;
+  color: #fff;
+}
+
 .combat-arena {
   display: grid;
   grid-template-columns: 1fr 2fr 1fr;

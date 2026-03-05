@@ -22,7 +22,8 @@ const ui = {
   stackCount: 1,
   message: "选择行动后点击锁定。",
   missileDraft: null,
-  lang: "zh"
+  lang: "zh",
+  soundEnabled: true
 };
 
 const I18N = {
@@ -261,12 +262,23 @@ function enqueueDisplaySfxIfNeeded() {
     return;
   }
 
+  if (!ui.soundEnabled) {
+    lastRevealWithQueuedSfx = state.reveal;
+    return;
+  }
+
   const events = deriveDisplayAudioEvents(state.reveal, "human");
   if (events.length > 0) {
     sfxQueue.enqueue(events);
     sfxQueue.play();
   }
   lastRevealWithQueuedSfx = state.reveal;
+}
+
+function onToggleSound() {
+  ui.soundEnabled = !ui.soundEnabled;
+  sfxQueue.setEnabled(ui.soundEnabled);
+  render();
 }
 
 function onNextRound() {
@@ -354,7 +366,10 @@ function render() {
     <div class="card">
       <div class="meta">
         <h1>${dict.title}</h1>
-        <button id="toggleLang">${dict.language}</button>
+        <div class="meta-actions">
+          <button id="toggleSound" class="${ui.soundEnabled ? "" : "muted"}">SHUT UP!</button>
+          <button id="toggleLang">${dict.language}</button>
+        </div>
       </div>
       <div class="meta">
         <span>${dict.matchRound(state.matchNumber, state.roundNumber)}</span>
@@ -417,6 +432,7 @@ function render() {
     </div>
   `;
 
+  document.getElementById("toggleSound")?.addEventListener("click", onToggleSound);
   document.getElementById("toggleLang")?.addEventListener("click", () => {
     ui.lang = ui.lang === "en" ? "zh" : "en";
     render();

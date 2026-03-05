@@ -11,15 +11,40 @@ const SOUND_URLS = {
   Kill: new URL("../../sounds/Kill.wav", import.meta.url).href
 };
 
+const SFX_VOLUME = 0.8;
+
 export class DisplaySfxQueue {
   constructor(gapMs = 100) {
     this.gapMs = gapMs;
     this.high = [];
     this.normal = [];
     this.isPlaying = false;
+    this.enabled = true;
+    this.currentAudio = null;
+    this.currentDone = null;
+  }
+
+  setEnabled(enabled) {
+    this.enabled = Boolean(enabled);
+    if (this.enabled) {
+      return;
+    }
+
+    this.high.length = 0;
+    this.normal.length = 0;
+    if (this.currentAudio) {
+      this.currentAudio.pause();
+      this.currentAudio.currentTime = 0;
+    }
+    if (this.currentDone) {
+      this.currentDone();
+    }
   }
 
   enqueue(events) {
+    if (!this.enabled) {
+      return;
+    }
     for (const event of events) {
       if (!SOUND_URLS[event.name]) {
         continue;
@@ -33,17 +58,21 @@ export class DisplaySfxQueue {
   }
 
   async play() {
-    if (this.isPlaying) {
+    if (this.isPlaying || !this.enabled) {
       return;
     }
     this.isPlaying = true;
     try {
-      while (this.high.length > 0 || this.normal.length > 0) {
+      while (this.enabled && (this.high.length > 0 || this.normal.length > 0)) {
         const nextName = this.high.length > 0 ? this.high.shift() : this.normal.shift();
-        await playOne(nextName);
-        await sleep(this.gapMs);
+        await playOne(nextName, this);
+        if (this.enabled) {
+          await sleep(this.gapMs);
+        }
       }
     } finally {
+      this.currentAudio = null;
+      this.currentDone = null;
       this.isPlaying = false;
     }
   }
@@ -140,7 +169,7 @@ function isOffensiveIntent(intent) {
   return kind === "attack" || kind === "aoe" || kind === "missile";
 }
 
-function playOne(name) {
+function playOne(name, queue = null) {
   return new Promise((resolve) => {
     const src = SOUND_URLS[name];
     if (!src) {
@@ -149,14 +178,24 @@ function playOne(name) {
     }
 
     const audio = new Audio(src);
+    audio.volume = SFX_VOLUME;
     let finished = false;
     const done = () => {
       if (finished) {
         return;
       }
       finished = true;
+      if (queue) {
+        queue.currentAudio = null;
+        queue.currentDone = null;
+      }
       resolve();
     };
+
+    if (queue) {
+      queue.currentAudio = audio;
+      queue.currentDone = done;
+    }
 
     audio.addEventListener("ended", done, { once: true });
     audio.addEventListener("error", done, { once: true });

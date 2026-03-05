@@ -69,6 +69,30 @@ A browser-based round game with one human player and four bots.
   - bots never use `missile`.
 - Match transition rule: if someone is eliminated this round, that round still stays in display/reveal; click `Next Round` once to settle elimination display, click again to start the next match.
 
+## One-Click Start (Windows)
+### For players (no Node install needed)
+Use the portable package produced by the maintainer:
+
+1. Unzip `Wood-Sword-portable.zip`.
+2. Open the extracted folder.
+3. Double-click `start-game.bat`.
+
+The package already includes:
+- built game files (`dist`),
+- bundled Node runtime (`runtime/node`),
+- local launcher (`start-game.bat`).
+
+The launcher starts on port `4173` by default and automatically switches to the next free port if `4173` is occupied.
+
+### For maintainer (build portable package)
+Run:
+
+```powershell
+npm run build:portable
+```
+
+This creates `release/Wood-Sword-portable.zip`. Send that zip to your friend.
+
 ## Development
 Requirements: Node.js 18+
 
