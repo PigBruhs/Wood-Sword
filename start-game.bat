@@ -21,8 +21,8 @@ if exist "%PORTABLE_NODE%" (
 if "%NODE_EXE%"=="" (
   echo Node runtime not found.
   echo Either:
-  echo 1) use the portable package that contains runtime\node, or
-  echo 2) install Node.js LTS from https://nodejs.org
+  echo 1^) use the portable package that contains runtime\node, or
+  echo 2^) install Node.js LTS from https://nodejs.org
   pause
   exit /b 1
 )
