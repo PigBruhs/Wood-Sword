@@ -11,7 +11,7 @@ const SOUND_URLS = {
   Kill: new URL("../../sounds/Kill.wav", import.meta.url).href
 };
 
-const SFX_VOLUME = 0.8;
+const SFX_VOLUME = 0.5;
 
 export class DisplaySfxQueue {
   constructor(gapMs = 100) {

@@ -22,6 +22,42 @@ body {
   gap: 12px;
 }
 
+.screen-flash {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999;
+}
+
+.screen-flash.flash-hit {
+  animation: screen-flash-hit 260ms ease-out;
+}
+
+.screen-flash.flash-death {
+  animation: screen-flash-death 720ms ease-out;
+}
+
+@keyframes screen-flash-hit {
+  0% {
+    background: rgba(220, 38, 38, 0.34);
+  }
+  100% {
+    background: rgba(220, 38, 38, 0);
+  }
+}
+
+@keyframes screen-flash-death {
+  0% {
+    background: rgba(185, 28, 28, 0.62);
+  }
+  45% {
+    background: rgba(185, 28, 28, 0.42);
+  }
+  100% {
+    background: rgba(185, 28, 28, 0);
+  }
+}
+
 .board-grid {
   min-height: 0;
   display: grid;
@@ -80,6 +116,12 @@ p {
 button.muted {
   background: #ef4444;
   border-color: #dc2626;
+  color: #fff;
+}
+
+button.hardcore-on {
+  background: #7c3aed;
+  border-color: #6d28d9;
   color: #fff;
 }
 
@@ -238,6 +280,13 @@ button:disabled {
   gap: 4px;
   max-height: 52vh;
   overflow: auto;
+}
+
+.log-history {
+  max-height: 56vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
 }
 
 @media (max-width: 1080px) {

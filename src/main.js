@@ -8,6 +8,7 @@ const app = document.getElementById("app");
 const state = createGameState();
 const sfxQueue = new DisplaySfxQueue(100);
 let lastRevealWithQueuedSfx = null;
+let lastRevealWithTrackedStats = null;
 
 for (const p of state.players) {
   if (!p.isHuman) {
@@ -16,6 +17,7 @@ for (const p of state.players) {
 }
 
 let timerId = null;
+let impactFlashTimerId = null;
 const ui = {
   actionType: "gather",
   targetId: "",
@@ -23,7 +25,10 @@ const ui = {
   message: "选择行动后点击锁定。",
   missileDraft: null,
   lang: "zh",
-  soundEnabled: true
+  soundEnabled: true,
+  hardcoreMode: false,
+  impactFlash: "",
+  logHistory: []
 };
 
 const I18N = {
@@ -125,9 +130,6 @@ const ACTION_LABELS = {
   hollowDefense: { en: "Hollow Defense", zh: "空心防御" },
   superiorDefense: { en: "Superior Defense", zh: "高级防御" }
 };
-
-startActionPhase();
-render();
 
 function t() {
   return I18N[ui.lang];
@@ -248,10 +250,53 @@ function revealRound() {
   state.phase = "display";
   state.phaseSecondsLeft = 0;
   state.reveal = resolveRound(state, state.intents);
+  pushRevealHistory(state.reveal);
+  updateCareerStatsFromReveal(state.reveal);
+  triggerImpactFlashFromReveal();
   enqueueDisplaySfxIfNeeded();
 
   clearInterval(timerId);
   render();
+}
+
+function triggerImpactFlashFromReveal() {
+  const humanResult = state.reveal?.byPlayer?.human;
+  if (!humanResult) {
+    return;
+  }
+
+  let nextFlash = "";
+  let durationMs = 0;
+
+  if (humanResult.died) {
+    nextFlash = "death";
+    durationMs = 720;
+  } else if (Number(humanResult.overwhelmedDamage ?? 0) > 0) {
+    nextFlash = "hit";
+    durationMs = 260;
+  }
+
+  if (!nextFlash) {
+    return;
+  }
+
+  if (impactFlashTimerId) {
+    clearTimeout(impactFlashTimerId);
+    impactFlashTimerId = null;
+  }
+
+  ui.impactFlash = "";
+  render();
+
+  setTimeout(() => {
+    ui.impactFlash = nextFlash;
+    render();
+    impactFlashTimerId = setTimeout(() => {
+      ui.impactFlash = "";
+      impactFlashTimerId = null;
+      render();
+    }, durationMs);
+  }, 0);
 }
 
 function enqueueDisplaySfxIfNeeded() {
@@ -278,6 +323,11 @@ function enqueueDisplaySfxIfNeeded() {
 function onToggleSound() {
   ui.soundEnabled = !ui.soundEnabled;
   sfxQueue.setEnabled(ui.soundEnabled);
+  render();
+}
+
+function onToggleHardcore() {
+  ui.hardcoreMode = !ui.hardcoreMode;
   render();
 }
 
@@ -348,6 +398,136 @@ function onMissileDone() {
   render();
 }
 
+// Add leaderboard and stats panel UI elements
+const leaderboard = {
+  maxSurvivalMatches: 0,
+  currentSurvivalMatches: 0
+};
+
+const stats = {
+  totalDamageDealt: 0,
+  totalDamageReceived: 0,
+  totalShieldsUsed: 0,
+  totalEnergySpent: 0,
+  totalKills: 0,
+  totalDeaths: 0
+};
+
+function loadStats() {
+  const savedStats = JSON.parse(localStorage.getItem("gameStats"));
+  if (savedStats) {
+    if (!Number.isFinite(savedStats.totalKills)) {
+      savedStats.totalKills = 0;
+    }
+    if (!Number.isFinite(savedStats.totalDeaths)) {
+      savedStats.totalDeaths = 0;
+    }
+    Object.assign(stats, savedStats);
+  }
+
+  const savedLeaderboard = JSON.parse(localStorage.getItem("leaderboard"));
+  if (savedLeaderboard) {
+    if (Number.isFinite(savedLeaderboard.maxSurvivalRounds) && !Number.isFinite(savedLeaderboard.maxSurvivalMatches)) {
+      savedLeaderboard.maxSurvivalMatches = savedLeaderboard.maxSurvivalRounds;
+    }
+    if (Number.isFinite(savedLeaderboard.currentSurvivalRounds) && !Number.isFinite(savedLeaderboard.currentSurvivalMatches)) {
+      savedLeaderboard.currentSurvivalMatches = savedLeaderboard.currentSurvivalRounds;
+    }
+    Object.assign(leaderboard, savedLeaderboard);
+  }
+
+  leaderboard.maxSurvivalMatches = Number(leaderboard.maxSurvivalMatches || 0);
+  leaderboard.currentSurvivalMatches = Number(leaderboard.currentSurvivalMatches || 0);
+}
+
+function saveStats() {
+  localStorage.setItem("gameStats", JSON.stringify(stats));
+  localStorage.setItem("leaderboard", JSON.stringify(leaderboard));
+}
+
+function updateCareerStatsFromReveal(reveal) {
+  if (!reveal?.byPlayer) {
+    return;
+  }
+  if (reveal === lastRevealWithTrackedStats) {
+    return;
+  }
+
+  const humanEntry = reveal.byPlayer.human;
+  if (!humanEntry) {
+    lastRevealWithTrackedStats = reveal;
+    return;
+  }
+
+  const dealtThisRound = Object.values(reveal.byPlayer)
+    .reduce((sum, entry) => sum + Number(entry.damageFrom?.human ?? 0), 0);
+  const killsThisRound = reveal.deadThisRound
+    .filter((deadId) => Number(reveal.byPlayer?.[deadId]?.damageFrom?.human ?? 0) > 0)
+    .length;
+  const deathsThisRound = humanEntry.died ? 1 : 0;
+
+  stats.totalDamageDealt = fmtNumber(stats.totalDamageDealt + dealtThisRound);
+  stats.totalDamageReceived = fmtNumber(stats.totalDamageReceived + Number(humanEntry.overwhelmedDamage ?? 0));
+  stats.totalShieldsUsed += Number(humanEntry.shieldsBroken ?? 0);
+  stats.totalEnergySpent = fmtNumber(stats.totalEnergySpent + Number(humanEntry.pointsSpent ?? 0));
+  stats.totalKills += killsThisRound;
+  stats.totalDeaths += deathsThisRound;
+
+  // Match-based streak: update only when this round ended a match (someone eliminated).
+  if ((reveal.deadThisRound?.length ?? 0) > 0) {
+    if (humanEntry.died) {
+      leaderboard.currentSurvivalMatches = 0;
+    } else {
+      leaderboard.currentSurvivalMatches += 1;
+      leaderboard.maxSurvivalMatches = Math.max(
+        leaderboard.maxSurvivalMatches,
+        leaderboard.currentSurvivalMatches
+      );
+    }
+  }
+
+  lastRevealWithTrackedStats = reveal;
+  saveStats();
+}
+
+function pushRevealHistory(reveal) {
+  if (!reveal?.byPlayer) {
+    return;
+  }
+  ui.logHistory.push({
+    matchNumber: state.matchNumber,
+    roundNumber: state.roundNumber,
+    reveal
+  });
+}
+
+function renderLeaderboardAndStats() {
+  return `
+    <div class="panel-card">
+      <h2>Leaderboard</h2>
+      <div class="log">
+        <p>Max Survival Matches: ${leaderboard.maxSurvivalMatches}</p>
+        <p>Current Survival Matches: ${leaderboard.currentSurvivalMatches}</p>
+      </div>
+    </div>
+    <div class="panel-card">
+      <h2>Stats</h2>
+      <div class="log">
+        <p>K: ${stats.totalKills}</p>
+        <p>D: ${stats.totalDeaths}</p>
+        <p>Total Damage Dealt: ${fmt(stats.totalDamageDealt)}</p>
+        <p>Total Damage Received: ${fmt(stats.totalDamageReceived)}</p>
+        <p>Total Shields Used: ${stats.totalShieldsUsed}</p>
+        <p>Total Energy Spent: ${fmt(stats.totalEnergySpent)}</p>
+      </div>
+    </div>
+  `;
+}
+
+// Call loadStats on game start.
+loadStats();
+
+// Update render function to include leaderboard and stats
 function render() {
   const human = state.players.find((p) => p.id === "human");
   const aliveTargets = state.players.filter((p) => p.alive && p.id !== "human");
@@ -363,11 +543,13 @@ function render() {
   const nextLabel = state.pendingMatchAdvance ? dict.nextMatch : dict.nextRound;
 
   app.innerHTML = `
+    <div class="screen-flash ${ui.impactFlash ? `flash-${ui.impactFlash}` : ""}"></div>
     <div class="card">
       <div class="meta">
         <h1>${dict.title}</h1>
         <div class="meta-actions">
           <button id="toggleSound" class="${ui.soundEnabled ? "" : "muted"}">SHUT UP!</button>
+          <button id="toggleHardcore" class="${ui.hardcoreMode ? "hardcore-on" : ""}">HARDCORE</button>
           <button id="toggleLang">${dict.language}</button>
         </div>
       </div>
@@ -376,6 +558,8 @@ function render() {
         <span>${dict.phase}: ${phaseLabel()}</span>
       </div>
     </div>
+
+    ${renderLeaderboardAndStats()}
 
     <div class="board-grid">
       <div class="panel-card">
@@ -402,6 +586,8 @@ function render() {
             <input id="stackCount" type="number" min="1" step="1" value="${ui.stackCount}" ${controlsDisabled ? "disabled" : ""} />
           </div>
           <button class="primary" id="lockAction" ${controlsDisabled ? "disabled" : ""}>${dict.lockAction}</button>
+          <button class="primary" id="nextRound" ${(state.phase === "display" && !state.gameOver && state.reveal) ? "" : "disabled"}>${nextLabel}</button>
+          <p ${(state.pendingMatchAdvance && state.phase === "display") ? "" : "style=\"display:none\""}>${dict.eliminationHold}</p>
           <p>${ui.message}</p>
         </div>
       </div>
@@ -414,10 +600,6 @@ function render() {
       <div class="panel-card side-stack">
         <div>
           <h2>${dict.reveal}</h2>
-          <div class="controls" ${state.phase === "display" && !state.gameOver && state.reveal ? "" : "style=\"display:none\""}>
-            <button class="primary" id="nextRound">${nextLabel}</button>
-            <p ${state.pendingMatchAdvance ? "" : "style=\"display:none\""}>${dict.eliminationHold}</p>
-          </div>
         </div>
 
         <div ${missileAllocationActive ? "" : "style=\"display:none\""}>
@@ -425,7 +607,7 @@ function render() {
           ${renderMissileQueue()}
         </div>
 
-        <div class="log">
+        <div class="log log-history">
           ${renderReveal()}
         </div>
       </div>
@@ -433,6 +615,7 @@ function render() {
   `;
 
   document.getElementById("toggleSound")?.addEventListener("click", onToggleSound);
+  document.getElementById("toggleHardcore")?.addEventListener("click", onToggleHardcore);
   document.getElementById("toggleLang")?.addEventListener("click", () => {
     ui.lang = ui.lang === "en" ? "zh" : "en";
     render();
@@ -578,6 +761,7 @@ function renderPlayerNode(player, pos, overlay) {
   const intent = visibleIntentForPlayer(player.id);
   const actionText = intent ? formatIntentWithTarget(intent) : dict.hidden;
   const roleLabel = player.isHuman ? dict.human : dict.botRandom;
+  const showNumericStats = player.isHuman || !ui.hardcoreMode;
   const targetedClass = overlay.targeted.has(player.id) ? " targeted" : "";
   const eliminatedClass = !player.alive ? " eliminated" : "";
   const aggregate = overlay.aggregateBySource[player.id];
@@ -587,8 +771,8 @@ function renderPlayerNode(player, pos, overlay) {
       <h3>${player.name}</h3>
       <div class="badges">
         <span class="badge">${roleLabel}</span>
-        <span class="badge">${dict.points}: ${fmt(player.points)}</span>
-        <span class="badge">${dict.shields}: ${player.shields}</span>
+        ${showNumericStats ? `<span class="badge">${dict.points}: ${fmt(player.points)}</span>` : ""}
+        ${showNumericStats ? `<span class="badge">${dict.shields}: ${player.shields}</span>` : ""}
         ${aggregate ? `<span class="badge agg">${aggregate}</span>` : ""}
       </div>
       <p>${dict.action}: ${actionText}</p>
@@ -636,22 +820,31 @@ function renderMissileQueue() {
 
 function renderReveal() {
   const dict = t();
+  const blocks = [];
+
   if (state.gameOver) {
     const winner = state.players.find((p) => p.id === state.winnerId);
-    return `<p>${dict.gameOver(winner ? winner.name : "None")}</p>`;
+    blocks.push(`<p>${dict.gameOver(winner ? winner.name : "None")}</p>`);
   }
 
-  if (!state.reveal) {
-    return `<p>${dict.noReveal}</p>`;
+  if (ui.logHistory.length === 0) {
+    blocks.push(`<p>${dict.noReveal}</p>`);
+    return blocks.join("");
   }
 
-  const lines = Object.values(state.reveal.byPlayer).map((entry) => {
-    const player = state.players.find((p) => p.id === entry.playerId);
-    const action = formatIntentWithTarget(entry.intent);
-    const dead = entry.died ? dict.died : dict.survived;
-    return `<p>${player.name}: ${action}, ${dict.incoming} ${fmt(entry.incomingDamage)}, ${dict.overflow} ${fmt(entry.overwhelmedDamage)}, ${dict.shieldsBroken} ${entry.shieldsBroken}. ${dead}</p>`;
-  });
-  return lines.join("");
+  for (let i = ui.logHistory.length - 1; i >= 0; i -= 1) {
+    const item = ui.logHistory[i];
+    blocks.push(`<p><strong>${t().matchRound(item.matchNumber, item.roundNumber)}</strong></p>`);
+    const lines = Object.values(item.reveal.byPlayer).map((entry) => {
+      const player = state.players.find((p) => p.id === entry.playerId);
+      const action = formatIntentWithTarget(entry.intent);
+      const dead = entry.died ? dict.died : dict.survived;
+      return `<p>${player?.name ?? entry.playerId}: ${action}, ${dict.incoming} ${fmt(entry.incomingDamage)}, ${dict.overflow} ${fmt(entry.overwhelmedDamage)}, ${dict.shieldsBroken} ${entry.shieldsBroken}. ${dead}</p>`;
+    });
+    blocks.push(lines.join(""));
+  }
+
+  return blocks.join("");
 }
 
 function formatIntentWithTarget(intent) {
@@ -688,6 +881,11 @@ function fmt(value) {
   return Number.isInteger(snapped) ? String(snapped) : snapped.toFixed(1);
 }
 
+function fmtNumber(value) {
+  const snapped = Math.round(Number(value) * 2) / 2;
+  return Number.isFinite(snapped) ? snapped : 0;
+}
+
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -706,3 +904,5 @@ function allocateRandom(total, targets) {
   return result;
 }
 
+startActionPhase();
+render();
