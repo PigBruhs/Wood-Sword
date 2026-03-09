@@ -78,7 +78,8 @@ const I18N = {
     actionPhaseHint: "Pick your action and lock it when ready.",
     nextRound: "Next Round",
     nextMatch: "Next Match",
-    eliminationHold: "Elimination resolved. Click again to start the next match."
+    eliminationHold: "Elimination resolved. Click again to start the next match.",
+    aliveCount: (n) => `Alive: ${n}`
   },
   zh: {
     title: "木剑",
@@ -117,7 +118,8 @@ const I18N = {
     actionPhaseHint: "选择行动后点击锁定。",
     nextRound: "下一回合",
     nextMatch: "下一场",
-    eliminationHold: "本回合淘汰已结算，再点一次进入下一场。"
+    eliminationHold: "本回合淘汰已结算，再点一次进入下一场。",
+    aliveCount: (n) => `当前存活：${n}`
   }
 };
 
@@ -345,6 +347,7 @@ function onNextRound() {
   if (state.phase !== "display" || !state.reveal) {
     return;
   }
+  sfxQueue.stopAndClear();
   processRoundEnd(state, state.reveal);
   if (!state.gameOver && state.phase === "action") {
     startActionPhase();
@@ -554,6 +557,7 @@ function render() {
   const human = state.players.find((p) => p.id === "human");
   const aliveTargets = state.players.filter((p) => p.alive && p.id !== "human");
   const dict = t();
+  const aliveCount = state.players.filter((p) => p.alive).length;
   if (aliveTargets.length === 0) {
     ui.targetId = "";
   } else if (!aliveTargets.some((p) => p.id === ui.targetId)) {
@@ -614,6 +618,12 @@ function render() {
           <button class="primary" id="nextRound" ${(state.phase === "display" && !state.gameOver && state.reveal) ? "" : "disabled"}>${dict.nextRound}</button>
           <button class="primary" id="nextMatchGame" ${(state.gameOver && state.phase === "gameOver") ? "" : "style=\"display:none\""}>${dict.nextMatch}</button>
           <p ${(state.pendingMatchAdvance && state.phase === "display") ? "" : "style=\"display:none\""}>${dict.eliminationHold}</p>
+
+          <div ${missileAllocationActive ? "" : "style=\"display:none\""}>
+            <h3>${dict.phaseMissile}</h3>
+            ${renderMissileQueue()}
+          </div>
+
           <p>${ui.message}</p>
         </div>
       </div>
@@ -626,11 +636,7 @@ function render() {
       <div class="panel-card side-stack">
         <div>
           <h2>${dict.reveal}</h2>
-        </div>
-
-        <div ${missileAllocationActive ? "" : "style=\"display:none\""}>
-          <h2>${dict.phaseMissile}</h2>
-          ${renderMissileQueue()}
+          <p>${dict.aliveCount(aliveCount)}</p>
         </div>
 
         <div class="log log-history">

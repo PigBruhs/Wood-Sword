@@ -31,6 +31,10 @@ export class DisplaySfxQueue {
       return;
     }
 
+    this.stopAndClear();
+  }
+
+  stopAndClear() {
     this.high.length = 0;
     this.normal.length = 0;
     if (this.currentAudio) {
