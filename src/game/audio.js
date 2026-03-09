@@ -14,8 +14,9 @@ const SOUND_URLS = {
 const SFX_VOLUME = 0.5;
 
 export class DisplaySfxQueue {
-  constructor(gapMs = 100) {
+  constructor(gapMs = 100, maxPending = 240) {
     this.gapMs = gapMs;
+    this.maxPending = Math.max(16, Math.floor(maxPending));
     this.high = [];
     this.normal = [];
     this.isPlaying = false;
@@ -54,6 +55,19 @@ export class DisplaySfxQueue {
       } else {
         this.normal.push(event.name);
       }
+      this.trimOverflow();
+    }
+  }
+
+  trimOverflow() {
+    let pending = this.high.length + this.normal.length;
+    while (pending > this.maxPending) {
+      if (this.normal.length > 0) {
+        this.normal.shift();
+      } else if (this.high.length > 0) {
+        this.high.shift();
+      }
+      pending = this.high.length + this.normal.length;
     }
   }
 

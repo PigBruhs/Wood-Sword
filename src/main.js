@@ -4,15 +4,23 @@ import { assignBotType, chooseBotAction } from "./game/bots.js";
 import { createGameState, processRoundEnd, resolveRound, validateIntent } from "./game/engine.js";
 import { deriveDisplayAudioEvents, DisplaySfxQueue } from "./game/audio.js";
 
+const PLAYER_COUNT_STORAGE_KEY = "woodSwordPlayerCount";
+const MIN_PLAYER_COUNT = 2;
+const MAX_PLAYER_COUNT = 64;
+
 const app = document.getElementById("app");
-const state = createGameState();
-const sfxQueue = new DisplaySfxQueue(100);
+let state = createGameState({ playerCount: loadPlayerCount() });
+const sfxQueue = new DisplaySfxQueue(100, 240);
 let lastRevealWithQueuedSfx = null;
 let lastRevealWithTrackedStats = null;
 
-for (const p of state.players) {
-  if (!p.isHuman) {
-    p.botType = assignBotType();
+assignBotTypes(state);
+
+function assignBotTypes(gameState) {
+  for (const p of gameState.players) {
+    if (!p.isHuman) {
+      p.botType = assignBotType();
+    }
   }
 }
 
@@ -28,7 +36,8 @@ const ui = {
   soundEnabled: true,
   hardcoreMode: false,
   impactFlash: "",
-  logHistory: []
+  logHistory: [],
+  playerCountInput: state.players.length
 };
 
 const I18N = {
@@ -177,6 +186,7 @@ function startActionPhase() {
 }
 
 function commitRound() {
+  state.reveal = null;
   const human = state.players.find((p) => p.id === "human");
   if (!human.alive) {
     state.intents.human = { type: "defense" };
@@ -207,8 +217,8 @@ function buildMissileQueue() {
     return;
   }
 
-  // Missile target picking happens during display so locked actions are already visible.
-  state.phase = "display";
+  // Missile target picking happens before reveal, while all locked actions stay visible.
+  state.phase = "missileTarget";
   ui.missileDraft = null;
   nextMissilePicker();
 }
@@ -340,6 +350,18 @@ function onNextRound() {
     startActionPhase();
   }
   render();
+}
+
+function onNextMatch() {
+  window.location.reload();
+}
+
+function onPlayerCountChange(nextRaw) {
+  const parsed = Number(nextRaw);
+  const clamped = clampPlayerCount(parsed);
+  ui.playerCountInput = clamped;
+  savePlayerCount(clamped);
+  startNewGame(clamped);
 }
 
 function submitHumanIntent() {
@@ -540,7 +562,6 @@ function render() {
 
   const controlsDisabled = state.phase !== "action" || !human.alive;
   const missileAllocationActive = isMissileAllocationActive();
-  const nextLabel = state.pendingMatchAdvance ? dict.nextMatch : dict.nextRound;
 
   app.innerHTML = `
     <div class="screen-flash ${ui.impactFlash ? `flash-${ui.impactFlash}` : ""}"></div>
@@ -548,6 +569,10 @@ function render() {
       <div class="meta">
         <h1>${dict.title}</h1>
         <div class="meta-actions">
+          <div class="player-count-wrap">
+            <label for="playerCountInput">Players</label>
+            <input id="playerCountInput" type="number" min="${MIN_PLAYER_COUNT}" max="${MAX_PLAYER_COUNT}" step="1" value="${ui.playerCountInput}" />
+          </div>
           <button id="toggleSound" class="${ui.soundEnabled ? "" : "muted"}">SHUT UP!</button>
           <button id="toggleHardcore" class="${ui.hardcoreMode ? "hardcore-on" : ""}">HARDCORE</button>
           <button id="toggleLang">${dict.language}</button>
@@ -586,7 +611,8 @@ function render() {
             <input id="stackCount" type="number" min="1" step="1" value="${ui.stackCount}" ${controlsDisabled ? "disabled" : ""} />
           </div>
           <button class="primary" id="lockAction" ${controlsDisabled ? "disabled" : ""}>${dict.lockAction}</button>
-          <button class="primary" id="nextRound" ${(state.phase === "display" && !state.gameOver && state.reveal) ? "" : "disabled"}>${nextLabel}</button>
+          <button class="primary" id="nextRound" ${(state.phase === "display" && !state.gameOver && state.reveal) ? "" : "disabled"}>${dict.nextRound}</button>
+          <button class="primary" id="nextMatchGame" ${(state.gameOver && state.phase === "gameOver") ? "" : "style=\"display:none\""}>${dict.nextMatch}</button>
           <p ${(state.pendingMatchAdvance && state.phase === "display") ? "" : "style=\"display:none\""}>${dict.eliminationHold}</p>
           <p>${ui.message}</p>
         </div>
@@ -639,16 +665,18 @@ function render() {
   document.getElementById("missileAllocate")?.addEventListener("click", onMissileAllocate);
   document.getElementById("missileDone")?.addEventListener("click", onMissileDone);
   document.getElementById("nextRound")?.addEventListener("click", onNextRound);
+  document.getElementById("nextMatchGame")?.addEventListener("click", onNextMatch);
+  document.getElementById("playerCountInput")?.addEventListener("change", (e) => {
+    onPlayerCountChange(e.target.value);
+  });
 }
 
 function getArenaPlayers() {
-  const recentlyEliminated = new Set(
-    state.phase === "display" && state.pendingMatchAdvance
-      ? (state.reveal?.deadThisRound ?? [])
-      : []
+  const revealedEliminated = new Set(
+    state.phase === "display" && state.reveal ? (state.reveal.deadThisRound ?? []) : []
   );
 
-  return state.players.filter((p) => p.alive || recentlyEliminated.has(p.id));
+  return state.players.filter((p) => p.alive || revealedEliminated.has(p.id));
 }
 
 function renderCombatArena() {
@@ -659,9 +687,10 @@ function renderCombatArena() {
 
   const positions = computeCirclePositions(arenaPlayers);
   const overlay = buildAttackOverlay(arenaPlayers, positions);
+  const densityClass = arenaDensityClass(arenaPlayers.length);
 
   return `
-    <div class="combat-arena">
+    <div class="combat-arena ${densityClass}">
       <svg class="attack-layer" viewBox="0 0 100 100" aria-hidden="true">
         <defs>
           <marker id="attack-arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
@@ -675,9 +704,24 @@ function renderCombatArena() {
   `;
 }
 
+function arenaDensityClass(count) {
+  if (count > 32) {
+    return "density-33-plus";
+  }
+  if (count >= 16) {
+    return "density-16-32";
+  }
+  return "density-normal";
+}
+
 function computeCirclePositions(players) {
   const result = {};
-  const radius = 39;
+  let radius = 39;
+  if (players.length > 32) {
+    radius = 46;
+  } else if (players.length >= 16) {
+    radius = 43;
+  }
   const youIndex = players.findIndex((p) => p.id === "human");
 
   // Keep You fixed at bottom-center and rotate everyone else around that anchor.
@@ -718,10 +762,15 @@ function buildAttackOverlay(alivePlayers, positions) {
       if (total > 0) {
         aggregateBySource[player.id] = `M x${total}`;
       }
-      for (const targetId of Object.keys(intent.missileTargets ?? {})) {
-        if (positions[targetId]) {
-          targeted.add(targetId);
+
+      const missileTargets = intent.missileTargets ?? {};
+      for (const [targetId, count] of Object.entries(missileTargets)) {
+        if (!positions[targetId] || Number(count) <= 0) {
+          continue;
         }
+        targeted.add(targetId);
+        // Draw a dashed arc per allocated missile target after lock/confirm.
+        arcs.push(renderAttackArc(player.id, targetId, positions));
       }
       continue;
     }
@@ -781,7 +830,7 @@ function renderPlayerNode(player, pos, overlay) {
 }
 
 function visibleIntentForPlayer(playerId) {
-  if (state.phase !== "display" && state.phase !== "gameOver") {
+  if (state.phase !== "missileTarget" && state.phase !== "display" && state.phase !== "gameOver") {
     return null;
   }
   if (state.reveal?.byPlayer?.[playerId]) {
@@ -791,7 +840,7 @@ function visibleIntentForPlayer(playerId) {
 }
 
 function isMissileAllocationActive() {
-  return state.phase === "display" && !state.reveal && (Boolean(ui.missileDraft) || state.missileQueue.length > 0);
+  return state.phase === "missileTarget" && !state.reveal && (Boolean(ui.missileDraft) || state.missileQueue.length > 0);
 }
 
 function renderMissileQueue() {
@@ -902,6 +951,39 @@ function allocateRandom(total, targets) {
     left -= 1;
   }
   return result;
+}
+
+function loadPlayerCount() {
+  const saved = Number(localStorage.getItem(PLAYER_COUNT_STORAGE_KEY));
+  return Number.isFinite(saved) && saved >= MIN_PLAYER_COUNT && saved <= MAX_PLAYER_COUNT
+    ? saved
+    : 8;
+}
+
+function savePlayerCount(count) {
+  localStorage.setItem(PLAYER_COUNT_STORAGE_KEY, count);
+}
+
+function clampPlayerCount(count) {
+  const numeric = Number.isFinite(count) ? Math.floor(count) : 8;
+  return Math.min(MAX_PLAYER_COUNT, Math.max(MIN_PLAYER_COUNT, numeric));
+}
+
+function startNewGame(playerCount) {
+  const clamped = clampPlayerCount(playerCount);
+  state = createGameState({ playerCount: clamped });
+  assignBotTypes(state);
+  ui.playerCountInput = clamped;
+  ui.targetId = "";
+  ui.stackCount = 1;
+  ui.missileDraft = null;
+  ui.logHistory = [];
+  ui.impactFlash = "";
+  ui.message = t().actionPhaseHint;
+  lastRevealWithQueuedSfx = null;
+  lastRevealWithTrackedStats = null;
+  startActionPhase();
+  render();
 }
 
 startActionPhase();

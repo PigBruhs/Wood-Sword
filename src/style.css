@@ -105,6 +105,26 @@ p {
 .meta-actions {
   display: flex;
   gap: 8px;
+  align-items: center;
+}
+
+.player-count-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.player-count-wrap input {
+  width: 68px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 4px 6px;
 }
 
 .meta-actions button {
@@ -192,6 +212,16 @@ button.hardcore-on {
   width: clamp(118px, 28vw, 165px);
   z-index: 1;
   transition: box-shadow 160ms ease, transform 160ms ease;
+}
+
+/* 16-32 visible players: tuned medium-density scale. */
+.combat-arena.density-16-32 .player-node {
+  transform: translate(-50%, -50%) scale(0.605);
+}
+
+/* 33+ visible players: tuned ultra-density scale. */
+.combat-arena.density-33-plus .player-node {
+  transform: translate(-50%, -50%) scale(0.41);
 }
 
 .player-node.targeted {

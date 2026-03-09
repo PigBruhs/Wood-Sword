@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { chooseBotAction } from "../src/game/bots.js";
-import { createGameState } from "../src/game/engine.js";
+import { createGameState as createBaseGameState } from "../src/game/engine.js";
+
+function createGameState() {
+  return createBaseGameState({ playerCount: 5 });
+}
 
 function player(state, id) {
   return state.players.find((p) => p.id === id);

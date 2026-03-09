@@ -8,14 +8,25 @@ import {
   toHalfUnits
 } from "./actions.js";
 
-export function createGameState() {
+export function createGameState(options = {}) {
+  const requestedCount = Number(options.playerCount ?? 8);
+  const totalPlayers = Math.max(2, Math.min(64, Number.isFinite(requestedCount) ? Math.floor(requestedCount) : 8));
+  const botCount = totalPlayers - 1;
   const players = [
-    { id: "human", name: "You", isHuman: true, alive: true, points: 0, shields: 0, prepReady: false },
-    { id: "bot-1", name: "Bot 1", isHuman: false, alive: true, points: 0, shields: 0, prepReady: false },
-    { id: "bot-2", name: "Bot 2", isHuman: false, alive: true, points: 0, shields: 0, prepReady: false },
-    { id: "bot-3", name: "Bot 3", isHuman: false, alive: true, points: 0, shields: 0, prepReady: false },
-    { id: "bot-4", name: "Bot 4", isHuman: false, alive: true, points: 0, shields: 0, prepReady: false }
+    { id: "human", name: "You", isHuman: true, alive: true, points: 0, shields: 0, prepReady: false }
   ];
+
+  for (let i = 1; i <= botCount; i += 1) {
+    players.push({
+      id: `bot-${i}`,
+      name: `Bot ${i}`,
+      isHuman: false,
+      alive: true,
+      points: 0,
+      shields: 0,
+      prepReady: false
+    });
+  }
 
   return {
     gameOver: false,
@@ -449,22 +460,7 @@ function sameSet(a, b) {
 export function processRoundEnd(state, reveal) {
   state.reveal = reveal;
 
-  if (state.pendingGameOver) {
-    state.gameOver = true;
-    state.phase = "gameOver";
-    state.pendingGameOver = false;
-    state.pendingMatchAdvance = false;
-    state.intents = {};
-    return;
-  }
-
-  if (state.pendingMatchAdvance) {
-    state.matchNumber += 1;
-    resetMatch(state);
-    return;
-  }
-
-  if (reveal.deadThisRound.length > 0) {
+  if ((reveal?.deadThisRound?.length ?? 0) > 0) {
     for (const deadId of reveal.deadThisRound) {
       const p = state.players.find((x) => x.id === deadId);
       if (p) {
@@ -475,17 +471,16 @@ export function processRoundEnd(state, reveal) {
     const stillAlive = getAlivePlayers(state);
     if (stillAlive.length <= 1) {
       state.winnerId = stillAlive.length === 1 ? stillAlive[0].id : null;
-      state.phase = "display";
-      state.pendingGameOver = true;
+      state.gameOver = true;
+      state.phase = "gameOver";
+      state.pendingGameOver = false;
       state.pendingMatchAdvance = false;
       state.intents = {};
       return;
     }
 
-    state.phase = "display";
-    state.pendingMatchAdvance = true;
-    state.pendingGameOver = false;
-    state.intents = {};
+    state.matchNumber += 1;
+    resetMatch(state);
     return;
   }
 

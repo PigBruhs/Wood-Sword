@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { createGameState, processRoundEnd, resolveRound } from "../src/game/engine.js";
+import { createGameState as createBaseGameState, processRoundEnd, resolveRound } from "../src/game/engine.js";
+
+function createGameState() {
+  return createBaseGameState({ playerCount: 5 });
+}
 
 function player(state, id) {
   return state.players.find((p) => p.id === id);
@@ -155,7 +159,7 @@ function resetAlive(state) {
   assert.equal(player(state, "human").points, 0.5);
 })();
 
-(function testEliminationNeedsSecondAdvanceToStartNextMatch() {
+(function testEliminationAdvancesToNextMatchOnNextRoundClick() {
   const state = createGameState();
   resetAlive(state);
   state.roundNumber = 3;
@@ -169,17 +173,11 @@ function resetAlive(state) {
   });
 
   processRoundEnd(state, reveal);
-  assert.equal(state.pendingMatchAdvance, true);
-  assert.equal(state.matchNumber, 1);
-  assert.equal(state.roundNumber, 3);
-  assert.equal(player(state, "human").alive, false);
-  assert.equal(state.phase, "display");
-
-  processRoundEnd(state, reveal);
   assert.equal(state.pendingMatchAdvance, false);
   assert.equal(state.matchNumber, 2);
   assert.equal(state.roundNumber, 1);
   assert.equal(state.phase, "action");
+  assert.equal(player(state, "human").alive, false);
 })();
 
 (function testPrepAddsOneDamageToNextAttackAndIsConsumed() {
@@ -235,7 +233,7 @@ function resetAlive(state) {
   assert.equal(attackReveal.byPlayer["bot-2"].incomingDamage, 1);
 })();
 
-(function testFinalEliminationShowsDisplayBeforeGameOver() {
+(function testFinalEliminationEntersGameOverStateAfterDisplayClick() {
   const state = createGameState();
   resetAlive(state);
 
@@ -249,15 +247,10 @@ function resetAlive(state) {
   });
 
   processRoundEnd(state, reveal);
-  assert.equal(state.gameOver, false);
-  assert.equal(state.phase, "display");
-  assert.equal(state.pendingGameOver, true);
-  assert.equal(state.winnerId, "human");
-
-  processRoundEnd(state, reveal);
   assert.equal(state.gameOver, true);
   assert.equal(state.phase, "gameOver");
   assert.equal(state.pendingGameOver, false);
+  assert.equal(state.winnerId, "human");
 })();
 
 console.log("engine tests passed");

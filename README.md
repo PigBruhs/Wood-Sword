@@ -1,9 +1,9 @@
 # Wood-Sword（中文）
-一个基于浏览器的回合制游戏：1 名人类玩家对战 4 个机器人。
+一个基于浏览器的回合制游戏：默认 1 名人类玩家对战 7 个机器人（可配置总人数 2~64）。
 
 ## 当前 MVP
 - 页面加载后可在浏览器中完整运行。
-- 固定阵容：1 人类 + 4 机器人。
+- 可配置人数：默认 8 人（1 人类 + 7 机器人），支持 2~64 人。
 - 移动端友好布局，包含行动控制区与环形竞技场。
 - UI 支持中英文切换。
 - 已实现比赛/回合流程与确定性伤害结算。
@@ -14,12 +14,13 @@
 - 一场 match 包含多个 round。
 - 每回合阶段：
   1. 行动锁定阶段：玩家秘密选择行动；仅当人类玩家锁定行动后进入下一阶段。
-  2. 展示 + 导弹分配阶段：显示已锁定行动；导弹使用者按随机顺序逐个分配目标。
+  2. 导弹分配阶段：显示所有已锁定行动；导弹使用者按随机顺序逐个分配目标。
   3. 展示结算阶段：导弹分配完成后执行结算并展示结果；玩家点击 `Next Round` 继续。
 - 当某回合至少有一名玩家死亡时，该 match 结束。
 - 死亡玩家从整局游戏中淘汰。
 - 存活者进入下一场 match 时重置状态（`0` 点气、`0` 护盾、无蓄力）。
-- 当仅剩 1 名玩家存活时，游戏结束。
+- 淘汰发生的当回合会先完整展示（包含被淘汰者），随后点击一次 `Next Round` 进入下一场 match。
+- 当仅剩 1 名玩家存活时，游戏结束，并显示 `Next Match` 按钮用于重开新局。
 
 ## 伤害、防御与护盾
 - 每种防御行动都有确定性格挡区间，例如 `0~3`。
@@ -67,7 +68,7 @@
   - 若没有存活对手点气大于 3，不使用 `dt defense`，
   - 若没有存活对手点气至少 5，不使用 `hollow defense` / `superior defense`，
   - 机器人不会使用 `missile`。
-- Match 切换规则：若本回合有人被淘汰，当前回合仍停留在展示/揭示阶段；点击一次 `Next Round` 结算淘汰展示，再点一次才进入下一场 match。
+- Match 切换规则：若本回合有人被淘汰，会先展示该回合结果（包含被淘汰者），点击一次 `Next Round` 即进入下一场；若仅剩 1 人则进入 `Game Over`，可点击 `Next Match` 重新开局。
 
 ## 一键启动（Windows）
 ### 玩家使用（无需安装 Node）
@@ -112,11 +113,11 @@ npm test
 ---
 
 # Wood-Sword
-A browser-based round game with one human player and four bots.
+A browser-based round game with a default roster of 1 human and 7 bots (configurable total player count: 2-64).
 
 ## Current MVP
 - Runs fully in the browser after page load.
-- Fixed roster: 1 human + 4 bots.
+- Configurable roster: default 8 players (1 human + 7 bots), supports 2-64 players.
 - Mobile-friendly layout with action controls and a circular combat arena.
 - English/Chinese language toggle in UI.
 - Match/round flow implemented with deterministic damage checks.
@@ -127,12 +128,13 @@ A browser-based round game with one human player and four bots.
 - A match has multiple rounds.
 - Round phases:
   1. Action lock phase: players choose actions in secret; round advances only when human locks action.
-  2. Display + missile allocation phase: locked actions are shown; missile users choose target allocations one-by-one in random order.
+  2. Missile allocation phase: locked actions are visible; missile users choose target allocations one-by-one in random order.
   3. Display resolution phase: once missile allocations are done, actions resolve and results are revealed; player clicks `Next Round` to continue.
 - A match ends when at least one player dies in a round.
 - Dead players are eliminated from the game.
 - Survivors start the next match with reset stats (`0` points, `0` shields, no prep).
-- Game ends when one player remains.
+- When elimination happens, that elimination round is shown first (including eliminated players), then one `Next Round` click starts the next match.
+- Game ends when one player remains, and a `Next Match` button appears to restart a new game.
 
 ## Damage, Defense, and Shields
 - Every defense action defines a deterministic block range, for example `0~3`.
@@ -180,11 +182,11 @@ A browser-based round game with one human player and four bots.
   - `dt defense` is not used unless an alive opponent has more than 3 points,
   - `hollow defense` / `superior defense` are not used unless an alive opponent has at least 5 points,
   - bots never use `missile`.
-- Match transition rule: if someone is eliminated this round, that round still stays in display/reveal; click `Next Round` once to settle elimination display, click again to start the next match.
+- Match transition rule: if someone is eliminated this round, that round is fully shown first (including eliminated players), then one `Next Round` click starts the next match; if only one player remains, state enters `Game Over` and `Next Match` can restart the game.
 
 ## One-Click Start (Windows)
 ### For players (no Node install needed)
-Use the portable package produced by the maintainer:
+Use the portable package produced by the maintainer：
 
 1. Unzip `Wood-Sword-portable.zip`.
 2. Open the extracted folder.
