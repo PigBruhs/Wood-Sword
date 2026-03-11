@@ -459,7 +459,11 @@ function simulateDefendAndShields(alive, local, damageByTarget, duelOverflowByTa
     overflow += duelOverflowByTarget[p.id] ?? 0;
     overflow = fromHalfUnits(toHalfUnits(overflow));
 
-    const neededShields = overflow > 0 ? Math.ceil(overflow / 2) : 0;
+    let neededShields = overflow > 0 ? Math.ceil(overflow / 2) : 0;
+    if (entry.intent.type === "shield" && incoming > 0) {
+      // Shield action now always loses at least one shield when hit.
+      neededShields = Math.max(neededShields, 1);
+    }
     const shieldsBroken = Math.min(p.shields, neededShields);
     const died = neededShields > p.shields;
     const afterShields = died ? 0 : p.shields - shieldsBroken;
