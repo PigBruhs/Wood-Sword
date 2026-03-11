@@ -74,6 +74,7 @@ const I18N = {
     yourMissiles: (total, left) => `Your missiles: ${total}, remaining: ${left}`,
     addMissile: "Add 1 missile to target",
     finishAllocation: "Finish Allocation",
+    clickTargetHint: "Click a player card in the arena to pick target.",
     lockMessage: (label) => `Locked in: ${label}`,
     actionPhaseHint: "Pick your action and lock it when ready.",
     nextRound: "Next Round",
@@ -114,6 +115,7 @@ const I18N = {
     yourMissiles: (total, left) => `你的导弹：${total}，剩余：${left}`,
     addMissile: "给目标追加 1 枚导弹",
     finishAllocation: "完成分配",
+    clickTargetHint: "点击竞技场内的玩家卡片来选择目标。",
     lockMessage: (label) => `已锁定：${label}`,
     actionPhaseHint: "选择行动后点击锁定。",
     nextRound: "下一回合",
@@ -606,9 +608,7 @@ function render() {
           </div>
           <div class="row" ${ACTIONS[ui.actionType].needsTarget ? "" : "style=\"display:none\""}>
             <label>${dict.target}</label>
-            <select id="targetId" ${controlsDisabled ? "disabled" : ""}>
-              ${aliveTargets.map((p) => `<option value="${p.id}" ${ui.targetId === p.id ? "selected" : ""}>${p.name}</option>`).join("")}
-            </select>
+            <p>${playerName(ui.targetId) || "-"}</p>
           </div>
           <div class="row" ${(ui.actionType === "fist" || ui.actionType === "missile") ? "" : "style=\"display:none\""}>
             <label>${dict.count}</label>
@@ -624,6 +624,7 @@ function render() {
             ${renderMissileQueue()}
           </div>
 
+          <p ${(ACTIONS[ui.actionType].needsTarget || missileAllocationActive) ? "" : "style=\"display:none\""}>${dict.clickTargetHint}</p>
           <p>${ui.message}</p>
         </div>
       </div>
@@ -656,18 +657,10 @@ function render() {
     ui.actionType = e.target.value;
     render();
   });
-  document.getElementById("targetId")?.addEventListener("change", (e) => {
-    ui.targetId = e.target.value;
-  });
   document.getElementById("stackCount")?.addEventListener("change", (e) => {
     ui.stackCount = Math.max(1, Number(e.target.value || 1));
   });
   document.getElementById("lockAction")?.addEventListener("click", submitHumanIntent);
-  document.getElementById("missileTarget")?.addEventListener("change", (e) => {
-    if (ui.missileDraft) {
-      ui.missileDraft.targetId = e.target.value;
-    }
-  });
   document.getElementById("missileAllocate")?.addEventListener("click", onMissileAllocate);
   document.getElementById("missileDone")?.addEventListener("click", onMissileDone);
   document.getElementById("nextRound")?.addEventListener("click", onNextRound);
@@ -675,6 +668,22 @@ function render() {
   document.getElementById("playerCountInput")?.addEventListener("change", (e) => {
     onPlayerCountChange(e.target.value);
   });
+
+  for (const node of document.querySelectorAll(".player-node.selectable-target")) {
+    node.addEventListener("click", () => {
+      const selectedPlayerId = node.dataset.playerId;
+      if (!selectedPlayerId) {
+        return;
+      }
+
+      if (state.phase === "action" && ACTIONS[ui.actionType].needsTarget) {
+        ui.targetId = selectedPlayerId;
+      } else if (ui.missileDraft && state.phase === "missileTarget") {
+        ui.missileDraft.targetId = selectedPlayerId;
+      }
+      render();
+    });
+  }
 }
 
 function getArenaPlayers() {
@@ -702,8 +711,12 @@ function renderCombatArena() {
           <marker id="attack-arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
             <path d="M0,0 L6,3 L0,6 z" fill="currentColor"></path>
           </marker>
+          <marker id="preview-arrowhead" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 z" fill="#60a5fa"></path>
+          </marker>
         </defs>
         ${overlay.arcs.join("")}
+        ${overlay.previewPulses.join("")}
       </svg>
       ${arenaPlayers.map((player) => renderPlayerNode(player, positions[player.id], overlay)).join("")}
     </div>
@@ -744,8 +757,16 @@ function computeCirclePositions(players) {
 
 function buildAttackOverlay(alivePlayers, positions) {
   const arcs = [];
+  const previewPulses = [];
   const targeted = new Set();
   const aggregateBySource = {};
+
+  const previewTargetId = getPreviewTargetId(positions);
+  if (previewTargetId) {
+    targeted.add(previewTargetId);
+    arcs.push(renderAttackArc("human", previewTargetId, positions, "attack-arc attack-arc-preview", "preview-arrowhead"));
+    previewPulses.push(renderPreviewHitPulse(previewTargetId, positions));
+  }
 
   for (const player of alivePlayers) {
     const intent = visibleIntentForPlayer(player.id);
@@ -776,7 +797,7 @@ function buildAttackOverlay(alivePlayers, positions) {
         }
         targeted.add(targetId);
         // Draw a dashed arc per allocated missile target after lock/confirm.
-        arcs.push(renderAttackArc(player.id, targetId, positions));
+        arcs.push(renderAttackArc(player.id, targetId, positions, "attack-arc", "attack-arrowhead"));
       }
       continue;
     }
@@ -786,13 +807,13 @@ function buildAttackOverlay(alivePlayers, positions) {
     }
 
     targeted.add(intent.targetId);
-    arcs.push(renderAttackArc(player.id, intent.targetId, positions));
+    arcs.push(renderAttackArc(player.id, intent.targetId, positions, "attack-arc", "attack-arrowhead"));
   }
 
-  return { arcs, targeted, aggregateBySource };
+  return { arcs, previewPulses, targeted, aggregateBySource };
 }
 
-function renderAttackArc(attackerId, targetId, positions) {
+function renderAttackArc(attackerId, targetId, positions, cssClass = "attack-arc", markerId = "attack-arrowhead") {
   const from = positions[attackerId];
   const to = positions[targetId];
   if (!from || !to) {
@@ -808,7 +829,20 @@ function renderAttackArc(attackerId, targetId, positions) {
   const cx = (from.x + to.x) / 2 + nx * curve;
   const cy = (from.y + to.y) / 2 + ny * curve;
 
-  return `<path class="attack-arc" d="M ${from.x.toFixed(2)} ${from.y.toFixed(2)} Q ${cx.toFixed(2)} ${cy.toFixed(2)} ${to.x.toFixed(2)} ${to.y.toFixed(2)}" marker-end="url(#attack-arrowhead)"></path>`;
+  return `<path class="${cssClass}" d="M ${from.x.toFixed(2)} ${from.y.toFixed(2)} Q ${cx.toFixed(2)} ${cy.toFixed(2)} ${to.x.toFixed(2)} ${to.y.toFixed(2)}" marker-end="url(#${markerId})"></path>`;
+}
+
+function renderPreviewHitPulse(targetId, positions) {
+  const target = positions[targetId];
+  if (!target) {
+    return "";
+  }
+  return `
+    <g class="preview-hit-pulse" transform="translate(${target.x.toFixed(2)} ${target.y.toFixed(2)})">
+      <circle class="preview-hit-core" r="0.9"></circle>
+      <circle class="preview-hit-ring" r="1.2"></circle>
+    </g>
+  `;
 }
 
 function renderPlayerNode(player, pos, overlay) {
@@ -819,10 +853,15 @@ function renderPlayerNode(player, pos, overlay) {
   const showNumericStats = player.isHuman || !ui.hardcoreMode;
   const targetedClass = overlay.targeted.has(player.id) ? " targeted" : "";
   const eliminatedClass = !player.alive ? " eliminated" : "";
+  const selectable = isSelectableTarget(player.id);
+  const selected = isSelectedTarget(player.id);
+  const selectableClass = selectable ? " selectable-target" : "";
+  const breathingClass = selectable && !selected ? " breathing-target" : "";
+  const selectedClass = selected ? " selected-target" : "";
   const aggregate = overlay.aggregateBySource[player.id];
 
   return `
-    <div class="player-tile player-node${targetedClass}${eliminatedClass}" style="left:${pos.x.toFixed(2)}%; top:${pos.y.toFixed(2)}%;">
+    <div class="player-tile player-node${targetedClass}${eliminatedClass}${selectableClass}${breathingClass}${selectedClass}" data-player-id="${player.id}" style="left:${pos.x.toFixed(2)}%; top:${pos.y.toFixed(2)}%;">
       <h3>${player.name}</h3>
       <div class="badges">
         <span class="badge">${roleLabel}</span>
@@ -833,6 +872,44 @@ function renderPlayerNode(player, pos, overlay) {
       <p>${dict.action}: ${actionText}</p>
     </div>
   `;
+}
+
+function getPreviewTargetId(positions) {
+  if (!positions.human) {
+    return "";
+  }
+  if (state.phase === "action" && ACTIONS[ui.actionType].needsTarget) {
+    return positions[ui.targetId] ? ui.targetId : "";
+  }
+  return "";
+}
+
+function isSelectableTarget(playerId) {
+  if (playerId === "human") {
+    return false;
+  }
+  const targetPlayer = state.players.find((p) => p.id === playerId);
+  if (!targetPlayer?.alive) {
+    return false;
+  }
+  if (state.phase === "action") {
+    const human = state.players.find((p) => p.id === "human");
+    return Boolean(human?.alive) && ACTIONS[ui.actionType].needsTarget;
+  }
+  if (state.phase === "missileTarget" && ui.missileDraft) {
+    return playerId !== ui.missileDraft.pickerId;
+  }
+  return false;
+}
+
+function isSelectedTarget(playerId) {
+  if (state.phase === "action" && ACTIONS[ui.actionType].needsTarget) {
+    return ui.targetId === playerId;
+  }
+  if (state.phase === "missileTarget" && ui.missileDraft) {
+    return ui.missileDraft.targetId === playerId;
+  }
+  return false;
 }
 
 function visibleIntentForPlayer(playerId) {
@@ -860,12 +937,7 @@ function renderMissileQueue() {
   const enemies = state.players.filter((p) => p.alive && p.id !== ui.missileDraft.pickerId);
   return `
     <p>${dict.yourMissiles(ui.missileDraft.total, ui.missileDraft.remaining)}</p>
-    <div class="row">
-      <label>${dict.target}</label>
-      <select id="missileTarget">
-        ${enemies.map((p) => `<option value="${p.id}" ${ui.missileDraft.targetId === p.id ? "selected" : ""}>${p.name}</option>`).join("")}
-      </select>
-    </div>
+    <p>${dict.target}: ${playerName(ui.missileDraft.targetId) || (enemies[0]?.name ?? "-")}</p>
     <div class="button-grid">
       <button id="missileAllocate">${dict.addMissile}</button>
       <button id="missileDone" ${ui.missileDraft.remaining === 0 ? "" : "disabled"}>${dict.finishAllocation}</button>
