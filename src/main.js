@@ -1,8 +1,9 @@
 import "./style.css";
 import { ACTIONS, ACTION_ORDER } from "./game/actions.js";
 import { assignBotType, chooseBotAction } from "./game/bots.js";
+import { BOT_DISPLAY_NAMES } from "./game/botNames.js";
 import { createGameState, processRoundEnd, resolveRound, validateIntent } from "./game/engine.js";
-import { deriveDisplayAudioEvents, DisplaySfxQueue } from "./game/audio.js";
+import { deriveDisplayAudioEvents, DisplaySfxQueue, playAllSoundsBurst } from "./game/audio.js";
 
 const PLAYER_COUNT_STORAGE_KEY = "woodSwordPlayerCount";
 const MIN_PLAYER_COUNT = 2;
@@ -10,11 +11,12 @@ const MAX_PLAYER_COUNT = 64;
 
 const app = document.getElementById("app");
 let state = createGameState({ playerCount: loadPlayerCount() });
-const sfxQueue = new DisplaySfxQueue(100, 240);
+const sfxQueue = new DisplaySfxQueue(0, 240);
 let lastRevealWithQueuedSfx = null;
 let lastRevealWithTrackedStats = null;
 
 assignBotTypes(state);
+assignBotDisplayNames(state);
 
 function assignBotTypes(gameState) {
   for (const p of gameState.players) {
@@ -24,8 +26,20 @@ function assignBotTypes(gameState) {
   }
 }
 
+function assignBotDisplayNames(gameState) {
+  const botPool = [...BOT_DISPLAY_NAMES];
+  shuffle(botPool);
+
+  const aliveBots = gameState.players.filter((p) => p.alive && !p.isHuman);
+  for (let i = 0; i < aliveBots.length; i += 1) {
+    aliveBots[i].name = botPool[i] ?? BOT_DISPLAY_NAMES[0];
+  }
+}
+
 let timerId = null;
 let impactFlashTimerId = null;
+let matchWinFxTimerId = null;
+let winnerShakeTimerId = null;
 const ui = {
   actionType: "gather",
   targetId: "",
@@ -37,7 +51,8 @@ const ui = {
   hardcoreMode: false,
   impactFlash: "",
   logHistory: [],
-  playerCountInput: state.players.length
+  playerCountInput: state.players.length,
+  matchWinFx: null
 };
 
 const I18N = {
@@ -69,6 +84,8 @@ const I18N = {
     incoming: "incoming",
     overflow: "overflow",
     shieldsBroken: "shields broken",
+    damageDealt: "damage dealt",
+    kills: "kills",
     choosingTargets: (name) => `${name} is choosing targets...`,
     preparingReveal: "Preparing reveal...",
     yourMissiles: (total, left) => `Your missiles: ${total}, remaining: ${left}`,
@@ -80,7 +97,8 @@ const I18N = {
     nextRound: "Next Round",
     nextMatch: "Next Match",
     eliminationHold: "Elimination resolved. Click again to start the next match.",
-    aliveCount: (n) => `Alive: ${n}`
+    aliveCount: (n) => `Alive: ${n}`,
+    winnerPrefix: "Winner: "
   },
   zh: {
     title: "木剑",
@@ -110,6 +128,8 @@ const I18N = {
     incoming: "受到伤害",
     overflow: "溢出伤害",
     shieldsBroken: "破盾数",
+    damageDealt: "造成伤害",
+    kills: "击杀数",
     choosingTargets: (name) => `${name} 正在分配目标...`,
     preparingReveal: "准备结算中...",
     yourMissiles: (total, left) => `你的导弹：${total}，剩余：${left}`,
@@ -121,7 +141,8 @@ const I18N = {
     nextRound: "下一回合",
     nextMatch: "下一场",
     eliminationHold: "本回合淘汰已结算，再点一次进入下一场。",
-    aliveCount: (n) => `当前存活：${n}`
+    aliveCount: (n) => `当前存活：${n}`,
+    winnerPrefix: "胜利者："
   }
 };
 
@@ -267,10 +288,85 @@ function revealRound() {
   pushRevealHistory(state.reveal);
   updateCareerStatsFromReveal(state.reveal);
   triggerImpactFlashFromReveal();
+  triggerMatchWinFxIfNeeded();
   enqueueDisplaySfxIfNeeded();
 
   clearInterval(timerId);
   render();
+}
+
+function triggerMatchWinFxIfNeeded() {
+  // Only show winner popup when the whole game has a single winner.
+  const alivePlayers = state.players.filter((p) => p.alive);
+  if (alivePlayers.length !== 1) {
+    return;
+  }
+
+  // Keep winner effect as a single flash by canceling hit/death flash.
+  if (impactFlashTimerId) {
+    clearTimeout(impactFlashTimerId);
+    impactFlashTimerId = null;
+  }
+  ui.impactFlash = "";
+
+  const winnerName = alivePlayers[0].name;
+  ui.matchWinFx = { winnerName, token: Date.now() };
+
+  if (matchWinFxTimerId) {
+    clearTimeout(matchWinFxTimerId);
+    matchWinFxTimerId = null;
+  }
+
+  triggerWinnerShake();
+
+  if (ui.soundEnabled) {
+    playAllSoundsBurst();
+  }
+
+  matchWinFxTimerId = setTimeout(() => {
+    ui.matchWinFx = null;
+    matchWinFxTimerId = null;
+    render();
+  }, 2000);
+}
+
+function triggerWinnerShake() {
+  document.body.classList.remove("winner-shake");
+  // Force reflow so repeated wins retrigger animation reliably.
+  void document.body.offsetWidth;
+  document.body.classList.add("winner-shake");
+
+  if (winnerShakeTimerId) {
+    clearTimeout(winnerShakeTimerId);
+    winnerShakeTimerId = null;
+  }
+
+  winnerShakeTimerId = setTimeout(() => {
+    document.body.classList.remove("winner-shake");
+    winnerShakeTimerId = null;
+  }, 180);
+}
+
+function deriveMatchWinnerName(reveal) {
+  const eliminatedId = reveal.deadThisRound?.[0];
+  const eliminatedEntry = eliminatedId ? reveal.byPlayer?.[eliminatedId] : null;
+  const damageFrom = eliminatedEntry?.damageFrom ?? {};
+
+  let bestAttackerId = "";
+  let bestDamage = -1;
+  for (const [attackerId, amount] of Object.entries(damageFrom)) {
+    if (Number(amount) > bestDamage) {
+      bestDamage = Number(amount);
+      bestAttackerId = attackerId;
+    }
+  }
+
+  if (bestAttackerId) {
+    return playerName(bestAttackerId);
+  }
+
+  const alive = state.players.find((p) => p.alive);
+  return alive?.name ?? "Unknown";
 }
 
 function triggerImpactFlashFromReveal() {
@@ -350,7 +446,11 @@ function onNextRound() {
     return;
   }
   sfxQueue.stopAndClear();
+  const beforeMatch = state.matchNumber;
   processRoundEnd(state, state.reveal);
+  if (state.matchNumber !== beforeMatch && !state.gameOver) {
+    assignBotDisplayNames(state);
+  }
   if (!state.gameOver && state.phase === "action") {
     startActionPhase();
   }
@@ -521,10 +621,17 @@ function pushRevealHistory(reveal) {
   if (!reveal?.byPlayer) {
     return;
   }
+
+  const namesById = {};
+  for (const player of state.players) {
+    namesById[player.id] = player.name;
+  }
+
   ui.logHistory.push({
     matchNumber: state.matchNumber,
     roundNumber: state.roundNumber,
-    reveal
+    reveal,
+    namesById
   });
 }
 
@@ -571,6 +678,7 @@ function render() {
 
   app.innerHTML = `
     <div class="screen-flash ${ui.impactFlash ? `flash-${ui.impactFlash}` : ""}"></div>
+    ${ui.matchWinFx ? `<div class="match-win-fx" data-token="${ui.matchWinFx.token}"><div class="match-win-fx-burst"></div><div class="match-win-fx-inner">${t().winnerPrefix}${ui.matchWinFx.winnerName}</div></div>` : ""}
     <div class="card">
       <div class="meta">
         <h1>${dict.title}</h1>
@@ -853,6 +961,8 @@ function renderPlayerNode(player, pos, overlay) {
   const showNumericStats = player.isHuman || !ui.hardcoreMode;
   const targetedClass = overlay.targeted.has(player.id) ? " targeted" : "";
   const eliminatedClass = !player.alive ? " eliminated" : "";
+  const prepStacks = Number.isFinite(Number(player.prepStacks)) ? Number(player.prepStacks) : (player.prepReady ? 1 : 0);
+  const prepClass = prepStacks >= 2 ? " prep-max" : (prepStacks >= 1 ? " prep-ready" : "");
   const selectable = isSelectableTarget(player.id);
   const selected = isSelectedTarget(player.id);
   const selectableClass = selectable ? " selectable-target" : "";
@@ -861,7 +971,7 @@ function renderPlayerNode(player, pos, overlay) {
   const aggregate = overlay.aggregateBySource[player.id];
 
   return `
-    <div class="player-tile player-node${targetedClass}${eliminatedClass}${selectableClass}${breathingClass}${selectedClass}" data-player-id="${player.id}" style="left:${pos.x.toFixed(2)}%; top:${pos.y.toFixed(2)}%;">
+    <div class="player-tile player-node${targetedClass}${eliminatedClass}${prepClass}${selectableClass}${breathingClass}${selectedClass}" data-player-id="${player.id}" style="left:${pos.x.toFixed(2)}%; top:${pos.y.toFixed(2)}%;">
       <h3>${player.name}</h3>
       <div class="badges">
         <span class="badge">${roleLabel}</span>
@@ -961,12 +1071,28 @@ function renderReveal() {
 
   for (let i = ui.logHistory.length - 1; i >= 0; i -= 1) {
     const item = ui.logHistory[i];
+    const dealtByPlayerId = {};
+    const killsByPlayerId = {};
+
+    for (const [targetId, targetEntry] of Object.entries(item.reveal.byPlayer)) {
+      for (const [attackerId, amount] of Object.entries(targetEntry.damageFrom ?? {})) {
+        dealtByPlayerId[attackerId] = (dealtByPlayerId[attackerId] ?? 0) + Number(amount || 0);
+      }
+      if ((item.reveal.deadThisRound ?? []).includes(targetId)) {
+        for (const attackerId of Object.keys(targetEntry.damageFrom ?? {})) {
+          killsByPlayerId[attackerId] = (killsByPlayerId[attackerId] ?? 0) + 1;
+        }
+      }
+    }
+
     blocks.push(`<p><strong>${t().matchRound(item.matchNumber, item.roundNumber)}</strong></p>`);
     const lines = Object.values(item.reveal.byPlayer).map((entry) => {
-      const player = state.players.find((p) => p.id === entry.playerId);
-      const action = formatIntentWithTarget(entry.intent);
+      const action = formatIntentWithTarget(entry.intent, item.namesById);
       const dead = entry.died ? dict.died : dict.survived;
-      return `<p>${player?.name ?? entry.playerId}: ${action}, ${dict.incoming} ${fmt(entry.incomingDamage)}, ${dict.overflow} ${fmt(entry.overwhelmedDamage)}, ${dict.shieldsBroken} ${entry.shieldsBroken}. ${dead}</p>`;
+      const displayName = item.namesById?.[entry.playerId] ?? entry.playerId;
+      const dealt = fmt(dealtByPlayerId[entry.playerId] ?? 0);
+      const kills = Number(killsByPlayerId[entry.playerId] ?? 0);
+      return `<p>${displayName}: ${action}, ${dict.incoming} ${fmt(entry.incomingDamage)}, ${dict.overflow} ${fmt(entry.overwhelmedDamage)}, ${dict.shieldsBroken} ${entry.shieldsBroken}, ${dict.damageDealt} ${dealt}, ${dict.kills} ${kills}. ${dead}</p>`;
     });
     blocks.push(lines.join(""));
   }
@@ -974,7 +1100,7 @@ function renderReveal() {
   return blocks.join("");
 }
 
-function formatIntentWithTarget(intent) {
+function formatIntentWithTarget(intent, namesById = null) {
   const base = actionLabel(intent.type);
   if (!intent) {
     return base;
@@ -983,19 +1109,22 @@ function formatIntentWithTarget(intent) {
   if (intent.type === "missile") {
     const allocations = intent.missileTargets ?? {};
     const parts = Object.entries(allocations)
-      .map(([targetId, count]) => `${playerName(targetId)} x${count}`)
+      .map(([targetId, count]) => `${playerName(targetId, namesById)} x${count}`)
       .join(", ");
     return parts ? `${base} -> ${parts}` : base;
   }
 
   if (intent.targetId) {
-    return `${base} -> ${playerName(intent.targetId)}`;
+    return `${base} -> ${playerName(intent.targetId, namesById)}`;
   }
 
   return base;
 }
 
-function playerName(playerId) {
+function playerName(playerId, namesById = null) {
+  if (namesById && namesById[playerId]) {
+    return namesById[playerId];
+  }
   const p = state.players.find((x) => x.id === playerId);
   return p ? p.name : playerId;
 }
@@ -1051,6 +1180,7 @@ function startNewGame(playerCount) {
   const clamped = clampPlayerCount(playerCount);
   state = createGameState({ playerCount: clamped });
   assignBotTypes(state);
+  assignBotDisplayNames(state);
   ui.playerCountInput = clamped;
   ui.targetId = "";
   ui.stackCount = 1;
@@ -1060,6 +1190,16 @@ function startNewGame(playerCount) {
   ui.message = t().actionPhaseHint;
   lastRevealWithQueuedSfx = null;
   lastRevealWithTrackedStats = null;
+  ui.matchWinFx = null;
+  if (matchWinFxTimerId) {
+    clearTimeout(matchWinFxTimerId);
+    matchWinFxTimerId = null;
+  }
+  if (winnerShakeTimerId) {
+    clearTimeout(winnerShakeTimerId);
+    winnerShakeTimerId = null;
+  }
+  document.body.classList.remove("winner-shake");
   startActionPhase();
   render();
 }

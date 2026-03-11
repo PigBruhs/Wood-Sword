@@ -13,8 +13,16 @@ const SOUND_URLS = {
 
 const SFX_VOLUME = 0.5;
 
+export function playAllSoundsBurst() {
+  for (const src of Object.values(SOUND_URLS)) {
+    const audio = new Audio(src);
+    audio.volume = SFX_VOLUME;
+    audio.play().catch(() => {});
+  }
+}
+
 export class DisplaySfxQueue {
-  constructor(gapMs = 100, maxPending = 240) {
+  constructor(gapMs = 0, maxPending = 240) {
     this.gapMs = gapMs;
     this.maxPending = Math.max(16, Math.floor(maxPending));
     this.high = [];

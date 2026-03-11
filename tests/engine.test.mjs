@@ -15,6 +15,7 @@ function resetAlive(state) {
     p.points = 10;
     p.shields = 0;
     p.prepReady = false;
+    p.prepStacks = 0;
   }
 }
 
@@ -251,6 +252,66 @@ function resetAlive(state) {
   assert.equal(state.phase, "gameOver");
   assert.equal(state.pendingGameOver, false);
   assert.equal(state.winnerId, "human");
+})();
+
+(function testPrepStacksUpToTwoAndStopsGrowing() {
+  const state = createGameState();
+  resetAlive(state);
+
+  resolveRound(state, {
+    human: { type: "prep" },
+    "bot-1": { type: "defense" },
+    "bot-2": { type: "defense" },
+    "bot-3": { type: "defense" },
+    "bot-4": { type: "defense" }
+  });
+  assert.equal(player(state, "human").prepStacks, 1);
+
+  resolveRound(state, {
+    human: { type: "prep" },
+    "bot-1": { type: "defense" },
+    "bot-2": { type: "defense" },
+    "bot-3": { type: "defense" },
+    "bot-4": { type: "defense" }
+  });
+  assert.equal(player(state, "human").prepStacks, 2);
+
+  resolveRound(state, {
+    human: { type: "prep" },
+    "bot-1": { type: "defense" },
+    "bot-2": { type: "defense" },
+    "bot-3": { type: "defense" },
+    "bot-4": { type: "defense" }
+  });
+  assert.equal(player(state, "human").prepStacks, 2);
+})();
+
+(function testPrepLlamaDealsOnePointFiveDamageAndConsumesPrep() {
+  const state = createGameState();
+  resetAlive(state);
+
+  resolveRound(state, {
+    human: { type: "prep" },
+    "bot-1": { type: "defense" },
+    "bot-2": { type: "defense" },
+    "bot-3": { type: "defense" },
+    "bot-4": { type: "defense" }
+  });
+  assert.equal(player(state, "human").prepStacks, 1);
+
+  const reveal = resolveRound(state, {
+    human: { type: "llama" },
+    "bot-1": { type: "defense" },
+    "bot-2": { type: "defense" },
+    "bot-3": { type: "defense" },
+    "bot-4": { type: "defense" }
+  });
+
+  assert.equal(reveal.byPlayer["bot-1"].incomingDamage, 1.5);
+  assert.equal(reveal.byPlayer["bot-2"].incomingDamage, 1.5);
+  assert.equal(reveal.byPlayer["bot-3"].incomingDamage, 1.5);
+  assert.equal(reveal.byPlayer["bot-4"].incomingDamage, 1.5);
+  assert.equal(player(state, "human").prepStacks, 0);
 })();
 
 console.log("engine tests passed");

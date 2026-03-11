@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { chooseBotAction } from "../src/game/bots.js";
+import { getIntentDamage } from "../src/game/actions.js";
 import { createGameState as createBaseGameState } from "../src/game/engine.js";
 
 function createGameState() {
@@ -31,6 +32,15 @@ function withSeededRandom(seed, fn) {
   } finally {
     Math.random = original;
   }
+}
+
+function isDefenseIntent(intentType) {
+  return intentType === "defense"
+    || intentType === "shield"
+    || intentType === "prep"
+    || intentType === "dtDefense"
+    || intentType === "hollowDefense"
+    || intentType === "superiorDefense";
 }
 
 (function testFirstRoundAlwaysGather() {
@@ -384,6 +394,123 @@ function withSeededRandom(seed, fn) {
 
   const lowQiRatio = lowQiHits / targetedSamples;
   assert.ok(lowQiRatio > 0.56, `expected low-Qi bias, ratio=${lowQiRatio}`);
+})();
+
+(function testNoDefenseWhenAllOpponentsHaveZeroPoints() {
+  const state = createGameState();
+  setAliveDefaults(state);
+  state.roundNumber = 2;
+
+  const bot = player(state, "bot-1");
+  bot.points = 6;
+  bot.shields = 0;
+
+  for (const p of state.players) {
+    if (p.id !== bot.id) {
+      p.points = 0;
+      p.shields = 0;
+      p.prepReady = false;
+    }
+  }
+
+  withSeededRandom(21, () => {
+    for (let i = 0; i < 1200; i += 1) {
+      const intent = chooseBotAction(state, bot);
+      assert.equal(isDefenseIntent(intent.type), false, `unexpected defense intent: ${intent.type}`);
+    }
+  });
+})();
+
+(function testDefenseProbabilityFollowsPlayerCountCurve() {
+  const state64 = createBaseGameState({ playerCount: 64 });
+  const state63 = createBaseGameState({ playerCount: 63 });
+
+  setAliveDefaults(state64);
+  setAliveDefaults(state63);
+  state64.roundNumber = 2;
+  state63.roundNumber = 2;
+
+  const bot64 = player(state64, "bot-1");
+  const bot63 = player(state63, "bot-1");
+  bot64.points = 3;
+  bot63.points = 3;
+
+  for (const p of state64.players) {
+    if (p.id !== bot64.id) {
+      p.points = 3;
+    }
+  }
+  for (const p of state63.players) {
+    if (p.id !== bot63.id) {
+      p.points = 3;
+    }
+  }
+
+  const samples = 12000;
+  let defense64 = 0;
+  let defense63 = 0;
+
+  withSeededRandom(22, () => {
+    for (let i = 0; i < samples; i += 1) {
+      if (isDefenseIntent(chooseBotAction(state64, bot64).type)) {
+        defense64 += 1;
+      }
+    }
+  });
+
+  withSeededRandom(22, () => {
+    for (let i = 0; i < samples; i += 1) {
+      if (isDefenseIntent(chooseBotAction(state63, bot63).type)) {
+        defense63 += 1;
+      }
+    }
+  });
+
+  const ratio64 = defense64 / samples;
+  const ratio63 = defense63 / samples;
+  assert.ok(ratio64 > 0.575 && ratio64 < 0.625, `expected ~60% defense at 64 players, ratio=${ratio64}`);
+  assert.ok(ratio63 > 0.57 && ratio63 < 0.62, `expected ~59.5% defense at 63 players, ratio=${ratio63}`);
+  assert.ok(ratio64 > ratio63, `expected 64-player defense ratio to exceed 63-player ratio, 64=${ratio64}, 63=${ratio63}`);
+})();
+
+(function testAttackDamageFitsTargetPoints() {
+  const state = createGameState();
+  setAliveDefaults(state);
+  state.roundNumber = 2;
+
+  const bot = player(state, "bot-1");
+  bot.points = 4;
+  bot.prepReady = false;
+
+  // Single enemy makes attack selection easier to observe.
+  player(state, "bot-2").alive = false;
+  player(state, "bot-3").alive = false;
+  player(state, "bot-4").alive = false;
+
+  const human = player(state, "human");
+  human.points = 1;
+  human.shields = 0;
+
+  let attackSamples = 0;
+  let suitableDamage = 0;
+
+  withSeededRandom(23, () => {
+    for (let i = 0; i < 3500; i += 1) {
+      const intent = chooseBotAction(state, bot);
+      if (!intent.targetId) {
+        continue;
+      }
+      attackSamples += 1;
+      const damage = getIntentDamage(intent, bot.prepReady);
+      if (damage >= human.points) {
+        suitableDamage += 1;
+      }
+    }
+  });
+
+  assert.ok(attackSamples >= 1000, `attack sample size too small: ${attackSamples}`);
+  const suitableRatio = suitableDamage / attackSamples;
+  assert.ok(suitableRatio > 0.72, `expected attacks to fit target points, ratio=${suitableRatio}`);
 })();
 
 console.log("bot tests passed");

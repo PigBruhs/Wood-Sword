@@ -60,22 +60,44 @@ function affordableActions(state, player) {
   });
 }
 
+function prepBonusLevel(player) {
+  const stacks = Number(player.prepStacks);
+  if (Number.isFinite(stacks)) {
+    return Math.max(0, Math.min(2, Math.floor(stacks)));
+  }
+  return player.prepReady ? 1 : 0;
+}
+
+function defenseActionChance(state, enemies) {
+  if (allOpponentsOutOfPoints(enemies)) {
+    return 0;
+  }
+  const aliveCount = state.players.filter((p) => p.alive).length;
+  const chance = 0.6 - ((64 - aliveCount) * 0.005);
+  return Math.max(0, Math.min(0.6, chance));
+}
+
+function isDefenseAction(type) {
+  const kind = ACTIONS[type]?.kind;
+  return kind === "defense";
+}
+
 function estimateEnemyMaxAttackDamage(enemy) {
-  let best = enemy.prepReady ? 1 : 0;
+  const prepLevel = prepBonusLevel(enemy);
+  let best = prepLevel > 0 ? prepLevel : 0;
 
   if (enemy.points > 0) {
-    // Fist can scale with points (0.5 per point of damage).
-    best = Math.max(best, normalizeHalf(enemy.points + (enemy.prepReady ? 1 : 0)));
+    best = Math.max(best, normalizeHalf(enemy.points + prepLevel));
   }
 
   for (const [type, action] of Object.entries(ACTIONS)) {
-    if (action.kind !== "attack") {
+    if (action.kind !== "attack" && type !== "llama") {
       continue;
     }
     if (!hasEnoughPoints(enemy.points, action.cost)) {
       continue;
     }
-    const dmg = getIntentDamage({ type }, enemy.prepReady);
+    const dmg = getIntentDamage({ type }, prepLevel);
     best = Math.max(best, dmg);
   }
 
@@ -158,12 +180,24 @@ function aggroMultiplier(state, attackerId, target, enemies) {
   return multiplier;
 }
 
+function attackFitScore(damage, targetPoints) {
+  if (targetPoints <= 0) {
+    return 0.25;
+  }
+  if (damage >= targetPoints) {
+    const overshoot = damage - targetPoints;
+    return Math.max(0.7, 2.2 - (overshoot * 0.35));
+  }
+  return Math.max(0.2, 0.35 + (damage / targetPoints));
+}
+
 function targetDamageScore(state, attackerId, target, damage, enemies) {
   const likelyMaxBlock = likelyDefenseCeiling(state, target);
   const likelyOverflow = Math.max(0, damage - likelyMaxBlock);
 
   // Prioritize targets who are easier to break and less able to absorb mistakes.
   let score = 0.4 + (likelyOverflow * 2.2);
+  score += attackFitScore(damage, target.points) * 1.15;
   score += Math.max(0, 2 - target.shields) * 0.9;
   score += Math.max(0, 3 - target.points) * 0.3;
   if (target.prepReady) {
@@ -184,9 +218,10 @@ function pickAttackTarget(state, player, enemies, damage) {
 function pickFistIntent(state, player, enemies) {
   const maxCount = Math.max(1, toHalfUnits(player.points));
   const countOptions = [];
+  const prepLevel = prepBonusLevel(player);
 
   for (let count = 1; count <= maxCount; count += 1) {
-    const damage = normalizeHalf((count * 0.5) + (player.prepReady ? 1 : 0));
+    const damage = normalizeHalf((count * 0.5) + prepLevel);
     const bestTargetScore = enemies.reduce(
       (best, enemy) => Math.max(best, targetDamageScore(state, player.id, enemy, damage, enemies)),
       0.1
@@ -197,7 +232,7 @@ function pickFistIntent(state, player, enemies) {
   }
 
   const count = weightedRandom(countOptions) ?? 1;
-  const damage = normalizeHalf((count * 0.5) + (player.prepReady ? 1 : 0));
+  const damage = normalizeHalf((count * 0.5) + prepLevel);
   const target = pickAttackTarget(state, player, enemies, damage) ?? randomOf(enemies);
   return { type: "fist", count, targetId: target.id };
 }
@@ -227,7 +262,7 @@ function actionWeight(state, player, type, predictedIncoming, enemies) {
   }
 
   if (action.kind === "attack") {
-    const baseDamage = getIntentDamage({ type }, player.prepReady);
+    const baseDamage = getIntentDamage({ type }, prepBonusLevel(player));
     const bestTarget = enemies.reduce(
       (best, enemy) => Math.max(best, targetDamageScore(state, player.id, enemy, baseDamage, enemies)),
       0.1
@@ -237,6 +272,21 @@ function actionWeight(state, player, type, predictedIncoming, enemies) {
   }
 
   return 0.1;
+}
+
+function pickDefenseType(state, player, defenseOptions, predictedIncoming, enemies) {
+  return weightedRandom(defenseOptions.map((option) => ({
+    value: option,
+    weight: actionWeight(state, player, option, predictedIncoming, enemies)
+  }))) ?? randomOf(defenseOptions);
+}
+
+function pickNonDefenseType(nonDefenseOptions) {
+  return randomOf(nonDefenseOptions);
+}
+
+function allOpponentsOutOfPoints(enemies) {
+  return enemies.length > 0 && enemies.every((enemy) => enemy.points <= 0);
 }
 
 export function assignBotType() {
@@ -249,7 +299,6 @@ export function chooseBotAction(state, player) {
     return { type: "defense" };
   }
 
-  // Requirement: first round always gather.
   if (state.roundNumber === 1) {
     return { type: "gather" };
   }
@@ -260,29 +309,32 @@ export function chooseBotAction(state, player) {
   }
 
   const predictedIncoming = estimateIncomingThreat(state, player);
+  const defenseOptions = options.filter((type) => isDefenseAction(type));
+  const nonDefenseOptions = options.filter((type) => !isDefenseAction(type));
 
-  // Avoid DT defense if no player has >3 points
-  const filteredOptions = options.filter(option => {
-    if (option === "DT_defense") {
-      return enemies.some(enemy => enemy.points > 3);
-    }
-    return true;
-  });
+  let type = null;
+  const defenseChance = defenseActionChance(state, enemies);
+  const wantDefense = defenseOptions.length > 0 && Math.random() < defenseChance;
 
-  const type = weightedRandom(filteredOptions.map((option) => ({
-    value: option,
-    weight: actionWeight(state, player, option, predictedIncoming, enemies)
-  }))) ?? randomOf(filteredOptions);
+  if (wantDefense) {
+    type = pickDefenseType(state, player, defenseOptions, predictedIncoming, enemies);
+  } else if (nonDefenseOptions.length > 0) {
+    type = pickNonDefenseType(nonDefenseOptions);
+  } else if (defenseOptions.length > 0) {
+    type = pickDefenseType(state, player, defenseOptions, predictedIncoming, enemies);
+  }
+
+  if (!type) {
+    type = randomOf(options);
+  }
 
   if (type === "fist") {
     return pickFistIntent(state, player, enemies);
   }
 
   if (ACTIONS[type].needsTarget) {
-    const damage = getIntentDamage({ type }, player.prepReady);
-
-    // Pick the most efficient target based on damage and hate mechanism
-    const target = pickAttackTarget(state, player, enemies, damage, true) ?? randomOf(enemies);
+    const damage = getIntentDamage({ type }, prepBonusLevel(player));
+    const target = pickAttackTarget(state, player, enemies, damage) ?? randomOf(enemies);
     return { type, targetId: target.id };
   }
 

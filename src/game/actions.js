@@ -51,19 +51,31 @@ export function getActionCost(intent) {
   return normalizeHalf(def.cost);
 }
 
-export function getIntentDamage(intent, prepReady) {
+function normalizePrepBonus(prepState) {
+  if (typeof prepState === "number" && Number.isFinite(prepState)) {
+    return Math.max(0, Math.min(2, Math.floor(prepState)));
+  }
+  return prepState ? 1 : 0;
+}
+
+export function getIntentDamage(intent, prepState) {
   const def = ACTIONS[intent.type];
   if (!def) {
     return 0;
   }
+  const prepBonus = normalizePrepBonus(prepState);
+
   if (intent.type === "fist") {
-    return normalizeHalf((Math.max(1, Math.floor(intent.count ?? 1)) * def.baseDamage) + (prepReady ? 1 : 0));
+    return normalizeHalf((Math.max(1, Math.floor(intent.count ?? 1)) * def.baseDamage) + prepBonus);
   }
   if (intent.type === "missile") {
     return normalizeHalf(Math.max(1, Math.floor(intent.count ?? 1)));
   }
+  if (intent.type === "llama") {
+    return normalizeHalf(def.baseDamage + prepBonus);
+  }
   if (def.kind === "attack") {
-    return normalizeHalf(def.baseDamage + (prepReady ? 1 : 0));
+    return normalizeHalf(def.baseDamage + prepBonus);
   }
   return 0;
 }
